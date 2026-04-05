@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Helm</title>
+    <link rel="preload" as="image" href="/helm-logo.png"/>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0b0c0e;
+            --fg: #f5f5f4;
+        }
+
+        html,
+        body,
+        #root {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: var(--bg);
+        }
+
+        body {
+            color: var(--fg);
+            font-family:
+                "SF Pro Text",
+                "SF Pro Display",
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
+            font-size: 14px;
+            line-height: 1.4;
+            text-rendering: optimizeLegibility;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .startup-shell {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: var(--bg);
+            color: var(--fg);
+            overflow: hidden;
+        }
+
+        .startup-drag-strip {
+            height: 34px;
+            background: var(--bg);
+        }
+
+        .startup-splash {
+            display: grid;
+            min-height: calc(100vh - 34px);
+            place-items: center;
+            padding: 28px;
+            background: var(--bg);
+        }
+
+        .startup-splash__content {
+            display: flex;
+            max-width: 360px;
+            align-items: center;
+            flex-direction: column;
+            text-align: center;
+        }
+
+        .startup-splash__logo {
+            width: 240px;
+            height: auto;
+            filter: drop-shadow(0 18px 40px rgba(0, 0, 0, 0.42));
+        }
+    </style>
+</head>
+<body>
+<div id="startup-splash" class="startup-shell">
+    <div class="startup-drag-strip"></div>
+    <div class="startup-splash">
+        <div class="startup-splash__content">
+            <img
+                alt="Helm"
+                class="startup-splash__logo"
+                fetchpriority="high"
+                id="startup-logo"
+                src="/helm-logo.png"
+            />
+        </div>
+    </div>
+</div>
+<div id="root"></div>
+<script>
+    (function () {
+        const startupLogo = document.getElementById("startup-logo");
+
+        function waitForStartupLogo(image) {
+            if (!(image instanceof HTMLImageElement) || image.complete) {
+                return Promise.resolve();
+            }
+
+            return new Promise((resolve) => {
+                let settled = false;
+                const finish = () => {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    image.removeEventListener("load", finish);
+                    image.removeEventListener("error", finish);
+                    resolve();
+                };
+
+                image.addEventListener("load", finish, { once: true });
+                image.addEventListener("error", finish, { once: true });
+                window.setTimeout(finish, 250);
+            });
+        }
+
+        function revealWindow() {
+            const app = window.go && window.go.main && window.go.main.App;
+            if (!app || typeof app.ShowWindow !== "function") {
+                window.setTimeout(revealWindow, 16);
+                return;
+            }
+
+            app.ShowWindow().catch(() => {});
+        }
+
+        waitForStartupLogo(startupLogo).then(() => {
+            requestAnimationFrame(() => {
+                window.setTimeout(revealWindow, 0);
+            });
+        });
+    })();
+</script>
+<script src="./src/main.tsx" type="module"></script>
+</body>
+</html>
