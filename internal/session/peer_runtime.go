@@ -236,6 +236,16 @@ func (r *peerRuntime) unregisterSession(sessionID int, reason string) {
 	_ = r.store.RemovePeerRegistration(state.PeerID)
 }
 
+func (r *peerRuntime) invalidateSnapshot() {
+	if r == nil {
+		return
+	}
+
+	r.mu.Lock()
+	r.snapshotValid = false
+	r.mu.Unlock()
+}
+
 func (r *peerRuntime) sessionDecorations() map[int]sessionPeerDecoration {
 	out := map[int]sessionPeerDecoration{}
 	if r == nil {

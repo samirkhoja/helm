@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { listWorktreeFiles } from "../backend";
-import type { RepoDTO } from "../types";
+import { listWorktreeFiles, searchWorktreeContents } from "../backend";
+import type { RepoDTO, WorktreeContentMatch } from "../types";
 import {
   describeSessionLabel,
   describeWorktreeMeta,
@@ -36,7 +36,21 @@ export interface PaletteFileItem {
   filename: string;
 }
 
-export type PaletteItem = PaletteSessionItem | PaletteActionItem | PaletteFileItem;
+export interface PaletteContentItem {
+  kind: "content";
+  id: string;
+  path: string;
+  filename: string;
+  line: number;
+  column: number;
+  preview: string;
+}
+
+export type PaletteItem =
+  | PaletteSessionItem
+  | PaletteActionItem
+  | PaletteFileItem
+  | PaletteContentItem;
 
 /* ── Action registry ─────────────────────────────────────────── */
 
@@ -70,6 +84,8 @@ function fileNameFromPath(path: string): string {
   return lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
 }
 
+const fileListRefreshIntervalMs = 2000;
+
 /* ── Hook ─────────────────────────────────────────────────────── */
 
 export type PaletteMode = "sessions" | "actions" | "files";
@@ -93,6 +109,10 @@ export function useCommandPalette(options: UseCommandPaletteOptions) {
   const [fileList, setFileList] = useState<string[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const filesCacheRef = useRef<{ worktreeId: number; files: string[] } | null>(null);
+  const fileListRequestIdRef = useRef(0);
+  const [contentMatches, setContentMatches] = useState<WorktreeContentMatch[]>([]);
+  const [contentLoading, setContentLoading] = useState(false);
+  const contentRequestIdRef = useRef(0);
 
   // Reset state when palette opens
   useEffect(() => {
@@ -116,36 +136,110 @@ export function useCommandPalette(options: UseCommandPaletteOptions) {
   // Load file list when entering file mode
   useEffect(() => {
     if (!open || mode !== "files" || !activeWorktreeId) {
-      return;
-    }
-
-    // Use cache if still valid for this worktree
-    if (filesCacheRef.current?.worktreeId === activeWorktreeId) {
-      setFileList(filesCacheRef.current.files);
+      if (!activeWorktreeId) {
+        setFileList([]);
+      }
+      setFilesLoading(false);
       return;
     }
 
     let cancelled = false;
-    setFilesLoading(true);
+    let requestInFlight = false;
+    const requestId = fileListRequestIdRef.current + 1;
+    fileListRequestIdRef.current = requestId;
 
-    listWorktreeFiles(activeWorktreeId).then(
-      (files) => {
-        if (cancelled) return;
-        filesCacheRef.current = { worktreeId: activeWorktreeId, files };
-        setFileList(files);
-        setFilesLoading(false);
-      },
-      () => {
-        if (cancelled) return;
-        setFileList([]);
-        setFilesLoading(false);
-      },
-    );
+    const cachedFiles =
+      filesCacheRef.current?.worktreeId === activeWorktreeId
+        ? filesCacheRef.current.files
+        : null;
+
+    if (cachedFiles) {
+      setFileList(cachedFiles);
+      setFilesLoading(false);
+    } else {
+      setFileList([]);
+      setFilesLoading(true);
+    }
+
+    const refreshFileList = (showLoading: boolean) => {
+      if (cancelled || requestInFlight) {
+        return;
+      }
+
+      requestInFlight = true;
+      if (showLoading) {
+        setFilesLoading(true);
+      }
+
+      listWorktreeFiles(activeWorktreeId).then(
+        (files) => {
+          if (cancelled || fileListRequestIdRef.current !== requestId) {
+            return;
+          }
+          filesCacheRef.current = { worktreeId: activeWorktreeId, files };
+          setFileList(files);
+          setFilesLoading(false);
+        },
+        () => {
+          if (cancelled || fileListRequestIdRef.current !== requestId) {
+            return;
+          }
+          if (filesCacheRef.current?.worktreeId !== activeWorktreeId) {
+            setFileList([]);
+          }
+          setFilesLoading(false);
+        },
+      ).finally(() => {
+        requestInFlight = false;
+      });
+    };
+
+    refreshFileList(!cachedFiles);
+    const intervalId = window.setInterval(() => {
+      refreshFileList(false);
+    }, fileListRefreshIntervalMs);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
   }, [open, mode, activeWorktreeId]);
+
+  useEffect(() => {
+    if (!open || mode !== "files" || !activeWorktreeId || searchQuery.length < 2) {
+      contentRequestIdRef.current += 1;
+      setContentMatches([]);
+      setContentLoading(false);
+      return;
+    }
+
+    const requestId = contentRequestIdRef.current + 1;
+    contentRequestIdRef.current = requestId;
+    setContentMatches([]);
+    setContentLoading(true);
+    const timeoutId = window.setTimeout(() => {
+      searchWorktreeContents(activeWorktreeId, searchQuery, 100).then(
+        (matches) => {
+          if (contentRequestIdRef.current !== requestId) {
+            return;
+          }
+          setContentMatches(matches);
+          setContentLoading(false);
+        },
+        () => {
+          if (contentRequestIdRef.current !== requestId) {
+            return;
+          }
+          setContentMatches([]);
+          setContentLoading(false);
+        },
+      );
+    }, 150);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeWorktreeId, mode, open, searchQuery]);
 
   // Build session items
   const sessionItems = useMemo((): PaletteSessionItem[] => {
@@ -183,6 +277,18 @@ export function useCommandPalette(options: UseCommandPaletteOptions) {
     }));
   }, [fileList]);
 
+  const contentItems = useMemo((): PaletteContentItem[] => {
+    return contentMatches.map((match) => ({
+      kind: "content" as const,
+      id: `c:${match.path}:${match.line}:${match.column}`,
+      path: match.path,
+      filename: fileNameFromPath(match.path),
+      line: match.line,
+      column: match.column,
+      preview: match.preview,
+    }));
+  }, [contentMatches]);
+
   // Filter items based on mode and query
   const filteredItems = useMemo((): PaletteItem[] => {
     if (mode === "actions") {
@@ -190,16 +296,20 @@ export function useCommandPalette(options: UseCommandPaletteOptions) {
       return ACTION_REGISTRY.filter((item) => substringMatch(searchQuery, item.label));
     }
     if (mode === "files") {
-      const matched = !searchQuery
+      const matchedFiles = !searchQuery
         ? fileItems
         : fileItems.filter((item) => substringMatch(searchQuery, item.path));
-      return matched.slice(0, 200);
+      const pathMatches = matchedFiles.slice(0, 200);
+      if (searchQuery.length < 2) {
+        return pathMatches;
+      }
+      return [...pathMatches, ...contentItems];
     }
     if (!searchQuery) return sessionItems;
     return sessionItems.filter(
       (item) => substringMatch(searchQuery, item.label) || substringMatch(searchQuery, item.detail),
     );
-  }, [mode, searchQuery, sessionItems, fileItems]);
+  }, [mode, searchQuery, sessionItems, fileItems, contentItems]);
 
   // Clamp selectedIndex when items change
   useEffect(() => {
@@ -229,6 +339,7 @@ export function useCommandPalette(options: UseCommandPaletteOptions) {
     selectedIndex,
     setSelectedIndex,
     filteredItems,
+    contentLoading,
     filesLoading,
     handleKeyDown,
     inputRef,

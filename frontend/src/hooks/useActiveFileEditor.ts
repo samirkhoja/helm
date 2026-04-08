@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { readWorktreeFile, saveWorktreeFile } from "../backend";
-import type { ActiveEditorFile } from "./filesPanelTypes";
+import type {
+  ActiveEditorFile,
+  FileNavigationTarget,
+  FileOpenOptions,
+} from "./filesPanelTypes";
 
 function nextEditorSync(
   current: ActiveEditorFile | null,
@@ -50,21 +54,46 @@ export function useActiveFileEditor(options: UseActiveFileEditorOptions) {
         editorSync: nextEditorSync(current, {
           reason: "discard",
           strategy: "replace-document",
+          target: null,
         }),
         error: null,
       };
     });
   };
 
-  const openFile = async (path: string) => {
+  const openFile = async (
+    path: string,
+    target?: FileNavigationTarget,
+    options?: FileOpenOptions,
+  ) => {
     if (!activeWorktreeId) {
       return;
     }
 
-    if (
-      (activeFile?.path === path && !activeFile.error) ||
-      openingFilePath === path
-    ) {
+    const forceReload = options?.forceReload ?? false;
+    if (activeFile?.path === path && !activeFile.error && !forceReload) {
+      if (!target) {
+        return;
+      }
+
+      setActiveFile((current) => {
+        if (!current || current.path !== path) {
+          return current;
+        }
+        return {
+          ...current,
+          editorSync: nextEditorSync(current, {
+            reason: "navigate",
+            strategy: "reveal-location",
+            target,
+          }),
+          error: null,
+        };
+      });
+      return;
+    }
+
+    if (openingFilePath === path) {
       return;
     }
 
@@ -100,6 +129,7 @@ export function useActiveFileEditor(options: UseActiveFileEditorOptions) {
         editorSync: nextEditorSync(null, {
           reason: "open",
           strategy: "replace-document",
+          target: target ?? null,
         }),
         error: null,
         loading: false,
@@ -125,6 +155,7 @@ export function useActiveFileEditor(options: UseActiveFileEditorOptions) {
             editorSync: nextEditorSync(null, {
               reason: "open",
               strategy: "replace-document",
+              target: null,
             }),
             error: errorMessage,
             loading: false,
@@ -215,6 +246,7 @@ export function useActiveFileEditor(options: UseActiveFileEditorOptions) {
           editorSync: nextEditorSync(current, {
             reason: "save",
             strategy: "rebase-document",
+            target: null,
           }),
           error: null,
           loading: false,

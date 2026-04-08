@@ -17,7 +17,12 @@ interface CommandPaletteProps {
   activeSessionId: number;
   activeWorktreeId: number | null;
   onActivateSession: (sessionId: number) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (target: {
+    path: string;
+    line?: number;
+    column?: number;
+    requireFreshContent?: boolean;
+  }) => void;
   onAction: (action: MenuAction) => void;
   onClose: () => void;
 }
@@ -59,8 +64,15 @@ export function CommandPalette(props: CommandPaletteProps) {
     (item: PaletteItem) => {
       if (item.kind === "session") {
         onActivateSession(item.sessionId);
+      } else if (item.kind === "content") {
+        onOpenFile({
+          path: item.path,
+          line: item.line,
+          column: item.column,
+          requireFreshContent: true,
+        });
       } else if (item.kind === "file") {
-        onOpenFile(item.path);
+        onOpenFile({ path: item.path });
       } else {
         onAction(item.action);
       }
@@ -85,7 +97,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     palette.mode === "actions"
       ? "Search actions\u2026"
       : palette.mode === "files"
-        ? "Search files\u2026"
+        ? "Search files or contents\u2026"
         : "Search sessions\u2026";
 
   return (
@@ -117,13 +129,19 @@ export function CommandPalette(props: CommandPaletteProps) {
 
         {palette.mode === "sessions" && !palette.query ? (
           <div className="command-palette__hint">
-            Type <kbd>&gt;</kbd> for actions or <kbd>/</kbd> for files
+            Type <kbd>&gt;</kbd> for actions or <kbd>/</kbd> for files and contents
           </div>
         ) : null}
 
         <div className="command-palette__list" ref={listRef}>
-          {palette.mode === "files" && palette.filesLoading ? (
+          {palette.mode === "files" &&
+          palette.filesLoading &&
+          palette.filteredItems.length === 0 ? (
             <div className="command-palette__empty">Loading files\u2026</div>
+          ) : palette.mode === "files" &&
+            palette.contentLoading &&
+            palette.filteredItems.length === 0 ? (
+            <div className="command-palette__empty">Searching contents\u2026</div>
           ) : palette.filteredItems.length === 0 ? (
             <div className="command-palette__empty">No results</div>
           ) : (
@@ -170,6 +188,26 @@ export function CommandPalette(props: CommandPaletteProps) {
                     </span>
                     <span className="command-palette__item-detail">
                       {item.path}
+                    </span>
+                  </>
+                ) : item.kind === "content" ? (
+                  <>
+                    <Search
+                      aria-hidden="true"
+                      className="command-palette__item-icon"
+                      size={14}
+                      strokeWidth={1.6}
+                    />
+                    <span className="command-palette__item-copy">
+                      <span className="command-palette__item-label">
+                        {item.filename}
+                      </span>
+                      <span className="command-palette__item-detail">
+                        {item.path}:{item.line}:{item.column}
+                      </span>
+                      <span className="command-palette__item-preview">
+                        {item.preview}
+                      </span>
                     </span>
                   </>
                 ) : (

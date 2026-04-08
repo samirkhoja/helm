@@ -14,6 +14,7 @@ import {
   activateSession,
   bootstrap,
   chooseWorkspace,
+  confirmDiscardFileChanges,
   createSession,
   createWorkspaceSession,
   createWorktreeSession,
@@ -293,12 +294,12 @@ function App() {
     enabled:
       paneLayout.diffPanelOpen && paneLayout.utilityPanelTab === "diff",
   });
-  const confirmDiscardFileChanges = useCallback(() => {
-    return window.confirm("Discard unsaved file changes?");
+  const confirmDiscardChanges = useCallback(async () => {
+    return await confirmDiscardFileChanges();
   }, []);
   const filesPanel = useFilesPanel({
     activeWorktreeId: activeWorktree?.id ?? null,
-    confirmDiscardPrompt: confirmDiscardFileChanges,
+    confirmDiscardPrompt: confirmDiscardChanges,
     enabled:
       paneLayout.diffPanelOpen && paneLayout.utilityPanelTab === "files",
   });
@@ -491,7 +492,7 @@ function App() {
     if (!state.workspacePicker) {
       return;
     }
-    if (!fileEditorShell.confirmNavigation()) {
+    if (!(await fileEditorShell.confirmNavigation())) {
       return;
     }
 
@@ -516,7 +517,7 @@ function App() {
     if (!state.sessionLauncher) {
       return;
     }
-    if (!fileEditorShell.confirmNavigation()) {
+    if (!(await fileEditorShell.confirmNavigation())) {
       return;
     }
 
@@ -546,10 +547,14 @@ function App() {
     }
   };
 
-  const activateSessionFlow = async (sessionId: number) => {
+  const activateSessionFlow = async (
+    sessionId: number,
+    options?: { skipNavigationConfirm?: boolean },
+  ) => {
     if (
       snapshot?.activeSessionId === sessionId ||
-      !fileEditorShell.confirmNavigation()
+      (!options?.skipNavigationConfirm &&
+        !(await fileEditorShell.confirmNavigation()))
     ) {
       return;
     }
@@ -565,7 +570,7 @@ function App() {
   const killSessionFlow = async (sessionId: number) => {
     if (
       snapshot?.activeSessionId === sessionId &&
-      !fileEditorShell.confirmNavigation()
+      !(await fileEditorShell.confirmNavigation())
     ) {
       return;
     }
@@ -584,10 +589,10 @@ function App() {
       return true;
     }
     if (activeFile) {
-      return fileEditorShell.focusTerminal();
+      return await fileEditorShell.focusTerminal();
     }
     if (paneLayout.diffPanelFullscreen || paneLayout.diffPanelOpen) {
-      return fileEditorShell.dismissUtilityOverlay();
+      return await fileEditorShell.dismissUtilityOverlay();
     }
 
     return false;
@@ -600,14 +605,14 @@ function App() {
     }
   };
 
-  const focusFilesPanel = useCallback(() => {
+  const focusFilesPanel = useCallback(async () => {
     if (!activeWorktree) {
       return false;
     }
 
     if (
       (!paneLayout.diffPanelOpen || paneLayout.utilityPanelTab !== "files") &&
-      !fileEditorShell.toggleUtilityPanel("files")
+      !(await fileEditorShell.toggleUtilityPanel("files"))
     ) {
       return false;
     }
@@ -623,7 +628,7 @@ function App() {
     paneLayout.utilityPanelTab,
   ]);
 
-  const ensureDiffPanelVisible = useCallback(() => {
+  const ensureDiffPanelVisible = useCallback(async () => {
     if (
       paneLayout.diffPanelOpen &&
       paneLayout.utilityPanelTab === "diff"
@@ -631,7 +636,7 @@ function App() {
       return true;
     }
 
-    return fileEditorShell.toggleUtilityPanel("diff");
+    return await fileEditorShell.toggleUtilityPanel("diff");
   }, [
     fileEditorShell,
     paneLayout.diffPanelOpen,
@@ -667,22 +672,22 @@ function App() {
         paneLayout.toggleSidebar();
         return;
       case "toggle-diff":
-        fileEditorShell.toggleUtilityPanel("diff");
+        await fileEditorShell.toggleUtilityPanel("diff");
         return;
       case "toggle-files":
-        fileEditorShell.toggleUtilityPanel("files");
+        await fileEditorShell.toggleUtilityPanel("files");
         return;
       case "toggle-peers":
-        fileEditorShell.toggleUtilityPanel("peers");
+        await fileEditorShell.toggleUtilityPanel("peers");
         return;
       case "toggle-diff-fullscreen":
-        fileEditorShell.toggleDiffFullscreen();
+        await fileEditorShell.toggleDiffFullscreen();
         return;
       case "focus-terminal":
-        fileEditorShell.focusTerminal();
+        await fileEditorShell.focusTerminal();
         return;
       case "focus-files-panel":
-        focusFilesPanel();
+        await focusFilesPanel();
         return;
       case "zoom-out-terminal":
         paneLayout.zoomOutTerminal();
@@ -694,22 +699,22 @@ function App() {
         paneLayout.zoomInTerminal();
         return;
       case "refresh-diff":
-        if (ensureDiffPanelVisible()) {
+        if (await ensureDiffPanelVisible()) {
           void diffPanel.refreshDiffPanel();
         }
         return;
       case "zoom-out-diff":
-        if (ensureDiffPanelVisible()) {
+        if (await ensureDiffPanelVisible()) {
           diffPanel.zoomOut();
         }
         return;
       case "reset-diff-zoom":
-        if (ensureDiffPanelVisible()) {
+        if (await ensureDiffPanelVisible()) {
           diffPanel.resetDiffTextZoom();
         }
         return;
       case "zoom-in-diff":
-        if (ensureDiffPanelVisible()) {
+        if (await ensureDiffPanelVisible()) {
           diffPanel.zoomIn();
         }
         return;
@@ -805,7 +810,9 @@ function App() {
             fileEditorSaving={activeFile?.saving ?? false}
             filesPanelActive={fileEditorShell.filesPanelActive}
             localOutstandingPeerCount={peerPanel.localOutstandingPeerCount}
-            onCloseFileEditor={fileEditorShell.closeFileEditor}
+            onCloseFileEditor={() => {
+              void fileEditorShell.closeFileEditor();
+            }}
             onSaveFileEditor={fileEditorShell.saveFileEditor}
             peersPanelActive={
               paneLayout.diffPanelOpen && paneLayout.utilityPanelTab === "peers"
@@ -814,13 +821,13 @@ function App() {
             subtitle={fileEditorShell.headerSubtitle}
             title={fileEditorShell.headerTitle}
             onToggleDiff={() => {
-              fileEditorShell.toggleUtilityPanel("diff");
+              void fileEditorShell.toggleUtilityPanel("diff");
             }}
             onToggleFiles={() => {
-              fileEditorShell.toggleUtilityPanel("files");
+              void fileEditorShell.toggleUtilityPanel("files");
             }}
             onTogglePeers={() => {
-              fileEditorShell.toggleUtilityPanel("peers");
+              void fileEditorShell.toggleUtilityPanel("peers");
             }}
             onToggleSidebar={paneLayout.toggleSidebar}
           />
@@ -926,7 +933,9 @@ function App() {
           onClearPeerMessages={() => {
             void peerPanel.handleClearPeerMessages();
           }}
-          onClose={fileEditorShell.closeUtilityPanel}
+          onClose={() => {
+            void fileEditorShell.closeUtilityPanel();
+          }}
           onDeletePeerMessage={(messageId) => {
             void peerPanel.handleDeletePeerMessage(messageId);
           }}
@@ -981,12 +990,24 @@ function App() {
         activeWorktreeId={activeWorktree?.id ?? null}
         onActivateSession={(sessionId) => {
           dispatch({ type: "closeModals" });
-          fileEditorShell.closeFileEditor();
-          void activateSessionFlow(sessionId);
+          void (async () => {
+            if (!(await fileEditorShell.closeFileEditor())) {
+              return;
+            }
+            await activateSessionFlow(sessionId, {
+              skipNavigationConfirm: true,
+            });
+          })();
         }}
-        onOpenFile={(path) => {
+        onOpenFile={(target) => {
           dispatch({ type: "closeModals" });
-          void filesPanel.openFile(path);
+          void filesPanel.openFile(
+            target.path,
+            target.line !== undefined && target.column !== undefined
+              ? { line: target.line, column: target.column }
+              : undefined,
+            target.requireFreshContent ? { forceReload: true } : undefined,
+          );
         }}
         onAction={(action) => {
           dispatch({ type: "closeModals" });

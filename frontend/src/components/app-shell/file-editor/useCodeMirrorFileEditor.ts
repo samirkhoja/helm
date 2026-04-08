@@ -31,6 +31,8 @@ type UseCodeMirrorFileEditorOptions = Pick<
   "activeFile" | "onDirtyChange" | "onSave"
 >;
 
+type FileNavigationTarget = FileEditorProps["activeFile"]["editorSync"]["target"];
+
 function createTabCommand() {
   return ({
     dispatch,
@@ -57,6 +59,38 @@ function syncDirtyState(
 
   dirtyRef.current = nextDirty;
   onDirtyChangeRef.current(nextDirty);
+}
+
+function targetOffsetForLine(
+  lineText: string,
+  lineFrom: number,
+  targetColumn: number,
+) {
+  const column = Math.max(1, targetColumn);
+  const codePoints = Array.from(lineText);
+  const safeColumn = Math.min(column, codePoints.length + 1);
+  const prefix = codePoints.slice(0, safeColumn - 1).join("");
+  return lineFrom + prefix.length;
+}
+
+function applyNavigationTarget(
+  view: EditorView,
+  target: FileNavigationTarget,
+) {
+  if (!target) {
+    return;
+  }
+
+  const lineNumber = Math.min(
+    Math.max(1, target.line),
+    Math.max(1, view.state.doc.lines),
+  );
+  const line = view.state.doc.line(lineNumber);
+  const offset = targetOffsetForLine(line.text, line.from, target.column);
+  view.dispatch({
+    selection: EditorSelection.cursor(offset),
+    scrollIntoView: true,
+  });
 }
 
 export function useCodeMirrorFileEditor(
@@ -152,6 +186,7 @@ export function useCodeMirrorFileEditor(
     view.focus();
     view.scrollDOM.scrollTop = 0;
     view.scrollDOM.scrollLeft = 0;
+    applyNavigationTarget(view, activeFile.editorSync.target);
 
     return () => {
       if (viewRef.current === view) {
@@ -215,10 +250,22 @@ export function useCodeMirrorFileEditor(
       activeFile.editorSync.strategy === "replace-document" &&
       !nextSavedDoc.eq(currentDoc)
     ) {
-      const anchor = Math.min(
+      let anchor = Math.min(
         view.state.selection.main.anchor,
         activeFile.savedContent.length,
       );
+      if (activeFile.editorSync.target) {
+        const lineNumber = Math.min(
+          Math.max(1, activeFile.editorSync.target.line),
+          Math.max(1, nextSavedDoc.lines),
+        );
+        const line = nextSavedDoc.line(lineNumber);
+        anchor = targetOffsetForLine(
+          line.text,
+          line.from,
+          activeFile.editorSync.target.column,
+        );
+      }
       view.dispatch({
         changes: {
           from: 0,
@@ -226,11 +273,21 @@ export function useCodeMirrorFileEditor(
           to: currentDoc.length,
         },
         selection: EditorSelection.cursor(anchor),
+        scrollIntoView: activeFile.editorSync.target != null,
       });
+    }
+
+    if (
+      shouldApplySync &&
+      activeFile.editorSync.strategy === "reveal-location" &&
+      activeFile.editorSync.target
+    ) {
+      applyNavigationTarget(view, activeFile.editorSync.target);
     }
 
     syncDirtyState(view, dirtyRef, onDirtyChangeRef, savedDocRef);
   }, [
+    activeFile.editorSync.target,
     activeFile.editorSync.strategy,
     activeFile.editorSync.token,
     activeFile.savedContent,

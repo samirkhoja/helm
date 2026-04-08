@@ -163,6 +163,13 @@ type WorktreeEntry struct {
 	Expandable bool   `json:"expandable"`
 }
 
+type WorktreeContentMatch struct {
+	Path    string `json:"path"`
+	Line    int    `json:"line"`
+	Column  int    `json:"column"`
+	Preview string `json:"preview"`
+}
+
 type WorktreeFile struct {
 	Path         string `json:"path"`
 	Content      string `json:"content"`

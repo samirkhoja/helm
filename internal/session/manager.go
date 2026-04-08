@@ -274,6 +274,9 @@ func (m *Manager) DeletePeerMessage(messageID int64) (PeerStateDTO, error) {
 	if err := m.store.DeletePeerMessage(messageID); err != nil {
 		return PeerStateDTO{}, err
 	}
+	if m.peerRuntime != nil {
+		m.peerRuntime.invalidateSnapshot()
+	}
 	return m.emitPeerStateRefresh(), nil
 }
 
@@ -283,6 +286,9 @@ func (m *Manager) ClearPeerMessages() (PeerStateDTO, error) {
 	}
 	if err := m.store.ClearPeerMessages(); err != nil {
 		return PeerStateDTO{}, err
+	}
+	if m.peerRuntime != nil {
+		m.peerRuntime.invalidateSnapshot()
 	}
 	return m.emitPeerStateRefresh(), nil
 }

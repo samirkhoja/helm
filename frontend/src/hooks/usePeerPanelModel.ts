@@ -1,6 +1,10 @@
 import { useMemo, useState } from "react";
 
-import { clearPeerMessages, deletePeerMessage } from "../backend";
+import {
+  clearPeerMessages,
+  confirmClearPeerMessages,
+  deletePeerMessage,
+} from "../backend";
 import type { PeerDTO, PeerMessageDTO, PeerStateDTO } from "../types";
 import { trimPathLabel } from "../utils/appShell";
 
@@ -187,7 +191,9 @@ export function usePeerPanelModel(options: UsePeerPanelModelOptions) {
     if (recentPeerMessages.length === 0) {
       return;
     }
-    if (!window.confirm("Clear all peer messages from the Helm panel?")) {
+
+    const shouldClear = await confirmClearPeerMessages();
+    if (!shouldClear) {
       return;
     }
 

@@ -7,11 +7,21 @@ export type FileDirectoryState = {
   loading: boolean;
 };
 
+export type FileNavigationTarget = {
+  column: number;
+  line: number;
+};
+
+export type FileOpenOptions = {
+  forceReload: boolean;
+};
+
 export type ActiveEditorFile = {
   dirty: boolean;
   editorSync: {
-    reason: "discard" | "open" | "save";
-    strategy: "rebase-document" | "replace-document";
+    reason: "discard" | "navigate" | "open" | "save";
+    strategy: "rebase-document" | "replace-document" | "reveal-location";
+    target: FileNavigationTarget | null;
     token: number;
   };
   error: string | null;

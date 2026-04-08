@@ -18,6 +18,14 @@ export function ClearPeerMessages() {
   return window['go']['main']['App']['ClearPeerMessages']();
 }
 
+export function ConfirmClearPeerMessages() {
+  return window['go']['main']['App']['ConfirmClearPeerMessages']();
+}
+
+export function ConfirmDiscardFileChanges() {
+  return window['go']['main']['App']['ConfirmDiscardFileChanges']();
+}
+
 export function CreateSession(arg1, arg2) {
   return window['go']['main']['App']['CreateSession'](arg1, arg2);
 }
@@ -68,6 +76,10 @@ export function SaveUIState(arg1) {
 
 export function SaveWorktreeFile(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SaveWorktreeFile'](arg1, arg2, arg3, arg4);
+}
+
+export function SearchWorktreeContents(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SearchWorktreeContents'](arg1, arg2, arg3);
 }
 
 export function SendSessionInput(arg1, arg2) {

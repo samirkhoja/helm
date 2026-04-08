@@ -4,6 +4,7 @@ import type {
   FileDiff,
   PeerStateDTO,
   UIStateDTO,
+  WorktreeContentMatch,
   WorkspaceChoice,
   WorktreeCreateRequest,
   WorktreeDiff,
@@ -14,6 +15,8 @@ import type {
 type AppBinding = {
   Bootstrap(): Promise<BootstrapResult>;
   ChooseWorkspace(): Promise<WorkspaceChoice | null>;
+  ConfirmClearPeerMessages(): Promise<boolean>;
+  ConfirmDiscardFileChanges(): Promise<boolean>;
   CreateWorkspaceSession(rootPath: string, agentId: string): Promise<AppSnapshot>;
   CreateSession(worktreeId: number, agentId: string): Promise<AppSnapshot>;
   CreateWorktreeSession(repoId: number, request: WorktreeCreateRequest): Promise<AppSnapshot>;
@@ -29,6 +32,7 @@ type AppBinding = {
   GetWorktreeDiff(worktreeId: number): Promise<WorktreeDiff>;
   GetFileDiff(worktreeId: number, path: string, staged: boolean): Promise<FileDiff>;
   ListWorktreeFiles(worktreeId: number): Promise<string[]>;
+  SearchWorktreeContents(worktreeId: number, query: string, limit: number): Promise<WorktreeContentMatch[]>;
   ListWorktreeEntries(worktreeId: number, relativeDir: string): Promise<WorktreeEntry[]>;
   ReadWorktreeFile(worktreeId: number, relativePath: string): Promise<WorktreeFile>;
   SaveWorktreeFile(worktreeId: number, relativePath: string, content: string, expectedVersion: string): Promise<WorktreeFile>;
@@ -48,6 +52,14 @@ export function bootstrap() {
 
 export function chooseWorkspace() {
   return backend().ChooseWorkspace();
+}
+
+export function confirmClearPeerMessages() {
+  return backend().ConfirmClearPeerMessages();
+}
+
+export function confirmDiscardFileChanges() {
+  return backend().ConfirmDiscardFileChanges();
 }
 
 export function createWorkspaceSession(rootPath: string, agentId: string) {
@@ -108,6 +120,14 @@ export function getFileDiff(worktreeId: number, path: string, staged: boolean) {
 
 export function listWorktreeFiles(worktreeId: number) {
   return backend().ListWorktreeFiles(worktreeId);
+}
+
+export function searchWorktreeContents(
+  worktreeId: number,
+  query: string,
+  limit: number,
+) {
+  return backend().SearchWorktreeContents(worktreeId, query, limit);
 }
 
 export function listWorktreeEntries(worktreeId: number, relativeDir: string) {

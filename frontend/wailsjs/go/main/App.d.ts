@@ -10,6 +10,10 @@ export function ChooseWorkspace():Promise<session.WorkspaceChoice>;
 
 export function ClearPeerMessages():Promise<session.PeerStateDTO>;
 
+export function ConfirmClearPeerMessages():Promise<boolean>;
+
+export function ConfirmDiscardFileChanges():Promise<boolean>;
+
 export function CreateSession(arg1:number,arg2:string):Promise<session.AppSnapshot>;
 
 export function CreateWorkspaceSession(arg1:string,arg2:string):Promise<session.AppSnapshot>;
@@ -35,6 +39,8 @@ export function ResizeSession(arg1:number,arg2:number,arg3:number):Promise<void>
 export function SaveUIState(arg1:session.UIStateDTO):Promise<void>;
 
 export function SaveWorktreeFile(arg1:number,arg2:string,arg3:string,arg4:string):Promise<session.WorktreeFile>;
+
+export function SearchWorktreeContents(arg1:number,arg2:string,arg3:number):Promise<Array<session.WorktreeContentMatch>>;
 
 export function SendSessionInput(arg1:number,arg2:string):Promise<void>;
 

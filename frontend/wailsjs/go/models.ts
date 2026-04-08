@@ -396,6 +396,24 @@ export namespace session {
 	        this.gitBranch = source["gitBranch"];
 	    }
 	}
+	export class WorktreeContentMatch {
+	    path: string;
+	    line: number;
+	    column: number;
+	    preview: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorktreeContentMatch(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.line = source["line"];
+	        this.column = source["column"];
+	        this.preview = source["preview"];
+	    }
+	}
 	export class WorktreeCreateRequest {
 	    mode: string;
 	    branchName: string;

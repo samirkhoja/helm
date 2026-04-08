@@ -1,17 +1,27 @@
 package session
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
+)
+
+const (
+	defaultContentSearchLimit     = 100
+	maxContentSearchPreviewRunes  = 120
+	maxFallbackSearchFileBytes    = 512 * 1024
+	contentSearchRefreshBatchSize = 32
 )
 
 func (m *Manager) ListWorktreeFiles(worktreeID int) ([]string, error) {
@@ -23,6 +33,17 @@ func (m *Manager) ListWorktreeFiles(worktreeID int) ([]string, error) {
 	}
 
 	return listWorktreeFiles(worktree.RootPath)
+}
+
+func (m *Manager) SearchWorktreeContents(worktreeID int, query string, limit int) ([]WorktreeContentMatch, error) {
+	m.mu.RLock()
+	worktree := m.findWorktreeByIDLocked(worktreeID)
+	m.mu.RUnlock()
+	if worktree == nil {
+		return nil, fmt.Errorf("worktree %d not found", worktreeID)
+	}
+
+	return searchWorktreeContents(worktree.RootPath, query, limit)
 }
 
 func (m *Manager) ListWorktreeEntries(worktreeID int, relativeDir string) ([]WorktreeEntry, error) {
@@ -158,6 +179,194 @@ func listWorktreeFiles(rootPath string) ([]string, error) {
 
 	sort.Strings(files)
 	return files, nil
+}
+
+func searchWorktreeContents(rootPath, query string, limit int) ([]WorktreeContentMatch, error) {
+	rootPath, err := normalizeRootPath(rootPath)
+	if err != nil {
+		return nil, err
+	}
+
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return []WorktreeContentMatch{}, nil
+	}
+	if limit <= 0 {
+		limit = defaultContentSearchLimit
+	}
+
+	if gitPath, err := exec.LookPath("git"); err == nil && isGitRepo(gitPath, rootPath) {
+		matches, err := gitSearchWorktreeContents(gitPath, rootPath, query, limit)
+		if err == nil {
+			return matches, nil
+		}
+	}
+
+	files, err := listWorktreeFiles(rootPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return searchWorktreeContentsInFiles(rootPath, files, query, limit)
+}
+
+func searchWorktreeContentsInFiles(rootPath string, files []string, query string, limit int) ([]WorktreeContentMatch, error) {
+	needle := strings.ToLower(query)
+	needleRuneLen := contentMaxInt(1, utf8.RuneCountInString(query))
+	matches := make([]WorktreeContentMatch, 0, minInt(limit, contentSearchRefreshBatchSize))
+	for _, relativePath := range files {
+		if len(matches) >= limit {
+			break
+		}
+
+		filePath, normalizedPath, err := resolveWorktreePath(rootPath, relativePath, false)
+		if err != nil {
+			continue
+		}
+
+		info, err := os.Stat(filePath)
+		if err != nil || info.IsDir() || !info.Mode().IsRegular() {
+			continue
+		}
+		if info.Size() > maxFallbackSearchFileBytes {
+			continue
+		}
+
+		content, err := os.ReadFile(filePath)
+		if err != nil || isUnsupportedEditableContent(content) {
+			continue
+		}
+
+		lines := strings.Split(string(content), "\n")
+		for lineIndex, line := range lines {
+			if len(matches) >= limit {
+				break
+			}
+
+			line = strings.TrimSuffix(line, "\r")
+			matchIndex := strings.Index(strings.ToLower(line), needle)
+			if matchIndex < 0 {
+				continue
+			}
+
+			matchRuneIndex := utf8.RuneCountInString(line[:matchIndex])
+			matches = append(matches, WorktreeContentMatch{
+				Path:    filepath.ToSlash(normalizedPath),
+				Line:    lineIndex + 1,
+				Column:  matchRuneIndex + 1,
+				Preview: contentMatchPreview(line, matchRuneIndex, needleRuneLen),
+			})
+		}
+	}
+
+	return matches, nil
+}
+
+func gitSearchWorktreeContents(gitPath, rootPath, query string, limit int) ([]WorktreeContentMatch, error) {
+	cmd := exec.Command(
+		gitPath,
+		"-C",
+		rootPath,
+		"grep",
+		"-z",
+		"-n",
+		"-I",
+		"-i",
+		"-F",
+		"--untracked",
+		"-e",
+		query,
+		"--",
+	)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	needle := strings.ToLower(query)
+	needleRuneLen := contentMaxInt(1, utf8.RuneCountInString(query))
+	reader := bufio.NewReader(stdout)
+	matches := make([]WorktreeContentMatch, 0, minInt(limit, contentSearchRefreshBatchSize))
+	killed := false
+
+	for len(matches) < limit {
+		path, err := reader.ReadString(0)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return nil, err
+		}
+
+		lineNumberText, err := reader.ReadString(0)
+		if err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return nil, err
+		}
+
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return nil, err
+		}
+
+		path = strings.TrimSuffix(path, "\x00")
+		lineNumberText = strings.TrimSuffix(lineNumberText, "\x00")
+		line = strings.TrimSuffix(line, "\n")
+		line = strings.TrimSuffix(line, "\r")
+
+		lineNumber, convErr := strconv.Atoi(lineNumberText)
+		if convErr == nil {
+			matchIndex := strings.Index(strings.ToLower(line), needle)
+			if matchIndex >= 0 {
+				matchRuneIndex := utf8.RuneCountInString(line[:matchIndex])
+				matches = append(matches, WorktreeContentMatch{
+					Path:    filepath.ToSlash(path),
+					Line:    lineNumber,
+					Column:  matchRuneIndex + 1,
+					Preview: contentMatchPreview(line, matchRuneIndex, needleRuneLen),
+				})
+			}
+		}
+
+		if err == io.EOF {
+			break
+		}
+	}
+
+	if len(matches) >= limit {
+		if killErr := cmd.Process.Kill(); killErr == nil {
+			killed = true
+		}
+	}
+
+	waitErr := cmd.Wait()
+	if killed {
+		return matches, nil
+	}
+	if waitErr == nil {
+		return matches, nil
+	}
+	if exitErr, ok := waitErr.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return []WorktreeContentMatch{}, nil
+	}
+
+	details := strings.TrimSpace(stderr.String())
+	if details != "" {
+		return nil, fmt.Errorf("failed to search contents: %w: %s", waitErr, details)
+	}
+	return nil, fmt.Errorf("failed to search contents: %w", waitErr)
 }
 
 func gitListedFiles(gitPath, rootPath string) ([]string, error) {
@@ -346,7 +555,52 @@ func isUnsupportedEditableContent(content []byte) bool {
 	return bytes.IndexByte(content, 0) >= 0 || !utf8.Valid(content)
 }
 
+func contentMatchPreview(line string, matchRuneIndex, matchRuneLen int) string {
+	runes := []rune(line)
+	if len(runes) <= maxContentSearchPreviewRunes {
+		return line
+	}
+
+	if matchRuneIndex < 0 {
+		matchRuneIndex = 0
+	}
+	if matchRuneLen < 1 {
+		matchRuneLen = 1
+	}
+
+	start := contentMaxInt(0, matchRuneIndex-40)
+	end := minInt(len(runes), start+maxContentSearchPreviewRunes)
+	matchEnd := minInt(len(runes), matchRuneIndex+matchRuneLen)
+	if matchEnd > end {
+		end = matchEnd
+		start = contentMaxInt(0, end-maxContentSearchPreviewRunes)
+	}
+
+	preview := string(runes[start:end])
+	if start > 0 {
+		preview = "…" + preview
+	}
+	if end < len(runes) {
+		preview += "…"
+	}
+	return preview
+}
+
 func fileVersionToken(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+func contentMaxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }

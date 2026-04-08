@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestListWorktreeEntriesSortsAndHidesGitDirectory(t *testing.T) {
@@ -145,6 +146,140 @@ func TestListWorktreeFilesUsesGitWhenAvailable(t *testing.T) {
 		if files[index] != want[index] {
 			t.Fatalf("files[%d] = %q, want %q", index, files[index], want[index])
 		}
+	}
+}
+
+func TestSearchWorktreeContentsFindsMatchesSortedByPathAndLine(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "zeta.txt"), []byte("needle later\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(zeta.txt) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "alpha.txt"), []byte("skip\nprefix needle\nneedle again\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(alpha.txt) error = %v", err)
+	}
+
+	matches, err := searchWorktreeContents(root, "needle", 10)
+	if err != nil {
+		t.Fatalf("searchWorktreeContents() error = %v", err)
+	}
+
+	if len(matches) != 3 {
+		t.Fatalf("len(matches) = %d, want 3 (%#v)", len(matches), matches)
+	}
+
+	if matches[0].Path != "alpha.txt" || matches[0].Line != 2 || matches[0].Column != 8 || matches[0].Preview != "prefix needle" {
+		t.Fatalf("matches[0] = %#v, want alpha.txt line 2 column 8", matches[0])
+	}
+	if matches[1].Path != "alpha.txt" || matches[1].Line != 3 || matches[1].Column != 1 || matches[1].Preview != "needle again" {
+		t.Fatalf("matches[1] = %#v, want alpha.txt line 3 column 1", matches[1])
+	}
+	if matches[2].Path != "zeta.txt" || matches[2].Line != 1 || matches[2].Column != 1 || matches[2].Preview != "needle later" {
+		t.Fatalf("matches[2] = %#v, want zeta.txt line 1 column 1", matches[2])
+	}
+}
+
+func TestSearchWorktreeContentsSkipsUnsupportedFilesAndRespectsLimit(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "alpha.txt"), []byte("needle one\nneedle two\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(alpha.txt) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "beta.bin"), []byte{'n', 'e', 'e', 'd', 'l', 'e', 0x00}, 0o644); err != nil {
+		t.Fatalf("WriteFile(beta.bin) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "gamma.txt"), []byte("needle three\nneedle four\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(gamma.txt) error = %v", err)
+	}
+
+	matches, err := searchWorktreeContents(root, "needle", 2)
+	if err != nil {
+		t.Fatalf("searchWorktreeContents() error = %v", err)
+	}
+
+	if len(matches) != 2 {
+		t.Fatalf("len(matches) = %d, want 2 (%#v)", len(matches), matches)
+	}
+	for _, match := range matches {
+		if match.Path == "beta.bin" {
+			t.Fatalf("match = %#v, want binary file skipped", match)
+		}
+	}
+}
+
+func TestSearchWorktreeContentsTruncatesPreviewAroundMatch(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	line := strings.Repeat("a", 90) + "needle" + strings.Repeat("b", 90)
+	if err := os.WriteFile(filepath.Join(root, "alpha.txt"), []byte(line+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(alpha.txt) error = %v", err)
+	}
+
+	matches, err := searchWorktreeContents(root, "needle", 10)
+	if err != nil {
+		t.Fatalf("searchWorktreeContents() error = %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("len(matches) = %d, want 1 (%#v)", len(matches), matches)
+	}
+	if matches[0].Preview == line {
+		t.Fatalf("matches[0].Preview = %q, want truncated preview", matches[0].Preview)
+	}
+	if !strings.Contains(matches[0].Preview, "needle") {
+		t.Fatalf("matches[0].Preview = %q, want preview containing match", matches[0].Preview)
+	}
+	if utf8.RuneCountInString(matches[0].Preview) > maxContentSearchPreviewRunes+2 {
+		t.Fatalf("preview rune count = %d, want <= %d", utf8.RuneCountInString(matches[0].Preview), maxContentSearchPreviewRunes+2)
+	}
+}
+
+func TestSearchWorktreeContentsSkipsOversizedFallbackFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	largeLine := strings.Repeat("x", maxFallbackSearchFileBytes+32) + "needle"
+	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte(largeLine), 0o644); err != nil {
+		t.Fatalf("WriteFile(large.txt) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "small.txt"), []byte("needle\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(small.txt) error = %v", err)
+	}
+
+	matches, err := searchWorktreeContents(root, "needle", 10)
+	if err != nil {
+		t.Fatalf("searchWorktreeContents() error = %v", err)
+	}
+	if len(matches) != 1 || matches[0].Path != "small.txt" {
+		t.Fatalf("matches = %#v, want only small.txt", matches)
+	}
+}
+
+func TestSearchWorktreeContentsSkipsSymlinkOutsideWorktree(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outsideRoot := t.TempDir()
+	outsidePath := filepath.Join(outsideRoot, "outside.txt")
+	if err := os.WriteFile(outsidePath, []byte("needle\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(outside.txt) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "inside.txt"), []byte("needle\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(inside.txt) error = %v", err)
+	}
+	if err := os.Symlink(outsidePath, filepath.Join(root, "linked.txt")); err != nil {
+		t.Skipf("Symlink(linked.txt) unsupported: %v", err)
+	}
+
+	matches, err := searchWorktreeContents(root, "needle", 10)
+	if err != nil {
+		t.Fatalf("searchWorktreeContents() error = %v", err)
+	}
+
+	if len(matches) != 1 || matches[0].Path != "inside.txt" {
+		t.Fatalf("matches = %#v, want only inside.txt", matches)
 	}
 }
 

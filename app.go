@@ -44,19 +44,21 @@ const (
 )
 
 type App struct {
-	ctx           context.Context
-	inheritedEnv  []string
-	registry      *agent.Registry
-	manager       *session.Manager
-	confirmClose  func(context.Context, int) (bool, error)
-	activeAgents  func() int
-	store         persist.Store
-	initErr       error
-	startupNotice string
-	ready         chan struct{}
-	initOnce      sync.Once
-	showOnce      sync.Once
-	showWindow    func(context.Context)
+	ctx                       context.Context
+	inheritedEnv              []string
+	registry                  *agent.Registry
+	manager                   *session.Manager
+	confirmClose              func(context.Context, int) (bool, error)
+	confirmClearPeerMessages  func(context.Context) (bool, error)
+	confirmDiscardFileChanges func(context.Context) (bool, error)
+	activeAgents              func() int
+	store                     persist.Store
+	initErr                   error
+	startupNotice             string
+	ready                     chan struct{}
+	initOnce                  sync.Once
+	showOnce                  sync.Once
+	showWindow                func(context.Context)
 }
 
 func NewApp() (*App, error) {
@@ -174,6 +176,36 @@ func confirmTerminateSessionsOnClose(ctx context.Context, activeAgents int) (boo
 		return false, err
 	}
 	return response == "Quit Helm", nil
+}
+
+func confirmClearPeerMessages(ctx context.Context) (bool, error) {
+	response, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
+		Type:          runtime.QuestionDialog,
+		Title:         "Clear peer messages?",
+		Message:       "Clear all peer messages from the Helm panel?",
+		Buttons:       []string{"Cancel", "Clear messages"},
+		DefaultButton: "Clear messages",
+		CancelButton:  "Cancel",
+	})
+	if err != nil {
+		return false, err
+	}
+	return response == "Clear messages", nil
+}
+
+func confirmDiscardFileChanges(ctx context.Context) (bool, error) {
+	response, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
+		Type:          runtime.QuestionDialog,
+		Title:         "Discard unsaved changes?",
+		Message:       "Discard unsaved file changes?",
+		Buttons:       []string{"Cancel", "Discard changes"},
+		DefaultButton: "Discard changes",
+		CancelButton:  "Cancel",
+	})
+	if err != nil {
+		return false, err
+	}
+	return response == "Discard changes", nil
 }
 
 func (a *App) Bootstrap() (session.BootstrapResult, error) {
@@ -296,6 +328,13 @@ func (a *App) ListWorktreeFiles(worktreeID int) ([]string, error) {
 	return a.manager.ListWorktreeFiles(worktreeID)
 }
 
+func (a *App) SearchWorktreeContents(worktreeID int, query string, limit int) ([]session.WorktreeContentMatch, error) {
+	if err := a.waitReady(); err != nil {
+		return nil, err
+	}
+	return a.manager.SearchWorktreeContents(worktreeID, query, limit)
+}
+
 func (a *App) ListWorktreeEntries(worktreeID int, relativeDir string) ([]session.WorktreeEntry, error) {
 	if err := a.waitReady(); err != nil {
 		return nil, err
@@ -350,6 +389,36 @@ func (a *App) ClearPeerMessages() (session.PeerStateDTO, error) {
 		return session.PeerStateDTO{}, err
 	}
 	return a.manager.ClearPeerMessages()
+}
+
+func (a *App) ConfirmClearPeerMessages() (bool, error) {
+	if err := a.waitReady(); err != nil {
+		return false, err
+	}
+	if a.ctx == nil {
+		return false, errors.New("helm runtime is not ready")
+	}
+
+	confirm := a.confirmClearPeerMessages
+	if confirm == nil {
+		confirm = confirmClearPeerMessages
+	}
+	return confirm(a.ctx)
+}
+
+func (a *App) ConfirmDiscardFileChanges() (bool, error) {
+	if err := a.waitReady(); err != nil {
+		return false, err
+	}
+	if a.ctx == nil {
+		return false, errors.New("helm runtime is not ready")
+	}
+
+	confirm := a.confirmDiscardFileChanges
+	if confirm == nil {
+		confirm = confirmDiscardFileChanges
+	}
+	return confirm(a.ctx)
 }
 
 func (a *App) startInitialization(resolver loginShellEnvResolver) {

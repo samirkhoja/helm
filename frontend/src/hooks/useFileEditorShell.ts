@@ -8,8 +8,8 @@ import type { ActiveEditorFile } from "./filesPanelTypes";
 
 type FilesPanelController = {
   activeFile: ActiveEditorFile | null;
-  confirmDiscardChanges: () => boolean;
-  closeEditor: () => boolean;
+  confirmDiscardChanges: () => Promise<boolean>;
+  closeEditor: () => Promise<boolean>;
   saveActiveFile: (contentOverride?: string) => Promise<void>;
 };
 
@@ -99,25 +99,25 @@ export function useFileEditorShell(options: UseFileEditorShellOptions) {
     activeWorktreeName,
   ]);
 
-  const confirmNavigation = useCallback(() => {
+  const confirmNavigation = useCallback(async () => {
     if (!activeFile) {
       return true;
     }
-    return filesPanel.confirmDiscardChanges();
+    return await filesPanel.confirmDiscardChanges();
   }, [activeFile, filesPanel]);
 
-  const closeFileEditor = useCallback(() => {
-    return filesPanel.closeEditor();
+  const closeFileEditor = useCallback(async () => {
+    return await filesPanel.closeEditor();
   }, [filesPanel]);
 
-  const closeUtilityPanel = useCallback(() => {
+  const closeUtilityPanel = useCallback(async () => {
     if (
       isLeavingFilesContext(
         paneLayout.diffPanelOpen,
         paneLayout.utilityPanelTab,
         null,
       ) &&
-      !confirmNavigation()
+      !(await confirmNavigation())
     ) {
       return false;
     }
@@ -131,14 +131,14 @@ export function useFileEditorShell(options: UseFileEditorShellOptions) {
   ]);
 
   const toggleUtilityPanel = useCallback(
-    (tab: UtilityPanelTab) => {
+    async (tab: UtilityPanelTab) => {
       if (
         isLeavingFilesContext(
           paneLayout.diffPanelOpen,
           paneLayout.utilityPanelTab,
           tab,
         ) &&
-        !confirmNavigation()
+        !(await confirmNavigation())
       ) {
         return false;
       }
@@ -153,13 +153,13 @@ export function useFileEditorShell(options: UseFileEditorShellOptions) {
     ],
   );
 
-  const dismissUtilityOverlay = useCallback(() => {
+  const dismissUtilityOverlay = useCallback(async () => {
     if (paneLayout.diffPanelFullscreen) {
       paneLayout.setDiffPanelFullscreen(false);
       return true;
     }
     if (paneLayout.diffPanelOpen) {
-      return closeUtilityPanel();
+      return await closeUtilityPanel();
     }
     return false;
   }, [
@@ -169,14 +169,14 @@ export function useFileEditorShell(options: UseFileEditorShellOptions) {
     paneLayout.setDiffPanelFullscreen,
   ]);
 
-  const toggleDiffFullscreen = useCallback(() => {
+  const toggleDiffFullscreen = useCallback(async () => {
     if (
       isLeavingFilesContext(
         paneLayout.diffPanelOpen,
         paneLayout.utilityPanelTab,
         "diff",
       ) &&
-      !confirmNavigation()
+      !(await confirmNavigation())
     ) {
       return false;
     }
@@ -194,8 +194,8 @@ export function useFileEditorShell(options: UseFileEditorShellOptions) {
     void filesPanel.saveActiveFile(fileEditorRef.current?.getCurrentContent());
   }, [filesPanel]);
 
-  const focusTerminal = useCallback(() => {
-    if (activeFile && !closeFileEditor()) {
+  const focusTerminal = useCallback(async () => {
+    if (activeFile && !(await closeFileEditor())) {
       return false;
     }
     terminalRef.current?.focusActive();

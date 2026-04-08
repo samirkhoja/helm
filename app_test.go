@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"helm-wails/internal/session"
 )
 
 func TestNewAppDoesNotInitializeEagerly(t *testing.T) {
@@ -97,6 +99,70 @@ func TestBeforeClosePreventsQuitWhenUserCancels(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("confirmClose called %d times, want 1", calls)
+	}
+}
+
+func TestConfirmClearPeerMessagesUsesInjectedPrompt(t *testing.T) {
+	app, err := NewApp()
+	if err != nil {
+		t.Fatalf("NewApp() error = %v", err)
+	}
+
+	ctx := context.Background()
+	app.ctx = ctx
+	app.manager = new(session.Manager)
+	close(app.ready)
+
+	calls := 0
+	app.confirmClearPeerMessages = func(got context.Context) (bool, error) {
+		calls++
+		if got != ctx {
+			t.Fatalf("confirmClearPeerMessages context = %#v, want app context", got)
+		}
+		return true, nil
+	}
+
+	confirmed, err := app.ConfirmClearPeerMessages()
+	if err != nil {
+		t.Fatalf("ConfirmClearPeerMessages() error = %v", err)
+	}
+	if !confirmed {
+		t.Fatalf("ConfirmClearPeerMessages() = false, want true")
+	}
+	if calls != 1 {
+		t.Fatalf("confirmClearPeerMessages called %d times, want 1", calls)
+	}
+}
+
+func TestConfirmDiscardFileChangesUsesInjectedPrompt(t *testing.T) {
+	app, err := NewApp()
+	if err != nil {
+		t.Fatalf("NewApp() error = %v", err)
+	}
+
+	ctx := context.Background()
+	app.ctx = ctx
+	app.manager = new(session.Manager)
+	close(app.ready)
+
+	calls := 0
+	app.confirmDiscardFileChanges = func(got context.Context) (bool, error) {
+		calls++
+		if got != ctx {
+			t.Fatalf("confirmDiscardFileChanges context = %#v, want app context", got)
+		}
+		return true, nil
+	}
+
+	confirmed, err := app.ConfirmDiscardFileChanges()
+	if err != nil {
+		t.Fatalf("ConfirmDiscardFileChanges() error = %v", err)
+	}
+	if !confirmed {
+		t.Fatalf("ConfirmDiscardFileChanges() = false, want true")
+	}
+	if calls != 1 {
+		t.Fatalf("confirmDiscardFileChanges called %d times, want 1", calls)
 	}
 }
 

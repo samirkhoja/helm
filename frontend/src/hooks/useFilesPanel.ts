@@ -4,6 +4,8 @@ import { useActiveFileEditor } from "./useActiveFileEditor";
 import type {
   ActiveEditorFile,
   FileDirectoryState,
+  FileNavigationTarget,
+  FileOpenOptions,
 } from "./filesPanelTypes";
 import { useFileBrowserTree } from "./useFileBrowserTree";
 
@@ -11,7 +13,7 @@ export type { ActiveEditorFile, FileDirectoryState };
 
 type UseFilesPanelOptions = {
   activeWorktreeId: number | null;
-  confirmDiscardPrompt: () => boolean;
+  confirmDiscardPrompt: () => Promise<boolean>;
   enabled: boolean;
 };
 
@@ -26,12 +28,12 @@ export function useFilesPanel(options: UseFilesPanelOptions) {
     activeWorktreeId,
   });
 
-  const confirmDiscardChanges = useCallback(() => {
+  const confirmDiscardChanges = useCallback(async () => {
     if (!activeFileEditor.hasDirtyChanges) {
       return true;
     }
 
-    const shouldDiscard = confirmDiscardPrompt();
+    const shouldDiscard = await confirmDiscardPrompt();
     if (shouldDiscard) {
       activeFileEditor.discardUnsavedChanges();
     }
@@ -43,17 +45,27 @@ export function useFilesPanel(options: UseFilesPanelOptions) {
   ]);
 
   const openFile = useCallback(
-    async (path: string) => {
-      if (!confirmDiscardChanges()) {
+    async (
+      path: string,
+      target?: FileNavigationTarget,
+      options?: FileOpenOptions,
+    ) => {
+      const needsNavigationConfirm =
+        activeFileEditor.activeFile?.path !== path || options?.forceReload;
+      if (needsNavigationConfirm && !(await confirmDiscardChanges())) {
         return;
       }
-      await activeFileEditor.openFile(path);
+      await activeFileEditor.openFile(path, target, options);
     },
-    [activeFileEditor.openFile, confirmDiscardChanges],
+    [
+      activeFileEditor.activeFile?.path,
+      activeFileEditor.openFile,
+      confirmDiscardChanges,
+    ],
   );
 
-  const closeEditor = useCallback(() => {
-    if (!confirmDiscardChanges()) {
+  const closeEditor = useCallback(async () => {
+    if (!(await confirmDiscardChanges())) {
       return false;
     }
     return activeFileEditor.closeEditor();

@@ -1711,12 +1711,24 @@ select.field__control {
     flex: 0 0 auto;
 }
 
+.command-palette__item-copy {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+}
+
 .command-palette__item-label {
     flex: 1;
     font-size: 13px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.command-palette__item-copy .command-palette__item-label {
+    flex: 0 1 auto;
 }
 
 .command-palette__item-detail {
@@ -1727,6 +1739,18 @@ select.field__control {
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 200px;
+}
+
+.command-palette__item-copy .command-palette__item-detail {
+    max-width: none;
+}
+
+.command-palette__item-preview {
+    color: var(--muted-strong);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .command-palette__active-badge {

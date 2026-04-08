@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"helm-wails/internal/agent"
 	persist "helm-wails/internal/state"
@@ -1141,6 +1142,135 @@ func TestManagerEmitSnapshotAndPeerStateOrdersSnapshotFirst(t *testing.T) {
 	if sink.events[0].name != EventAppSnapshot || sink.events[1].name != EventPeerState {
 		t.Fatalf("event order = %#v, want app snapshot then peer state", sink.events)
 	}
+}
+
+func TestManagerDeleteAndClearPeerMessagesInvalidateCachedPeerSnapshot(t *testing.T) {
+	supportRoot := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HELM_PEER_SUPPORT_ROOT", supportRoot)
+
+	executablePath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+
+	sink := &fakeSink{}
+	store := newTestStore(t)
+	manager := NewManager(newPeerEnabledRegistry(t), os.Environ(), newFakeStarter(), sink, store)
+	if err := manager.EnablePeerRuntime(executablePath); err != nil {
+		t.Fatalf("EnablePeerRuntime() error = %v", err)
+	}
+	t.Cleanup(manager.Shutdown)
+
+	root := t.TempDir()
+	created, err := manager.CreateWorkspaceSession(root, "codex")
+	if err != nil {
+		t.Fatalf("CreateWorkspaceSession(codex) error = %v", err)
+	}
+
+	var sessionID int
+	for _, repo := range created.Repos {
+		for _, worktree := range repo.Worktrees {
+			for _, session := range worktree.Sessions {
+				sessionID = session.ID
+				break
+			}
+		}
+	}
+	if sessionID == 0 {
+		t.Fatalf("created snapshot = %#v, want session", created)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	peerID := ""
+	for time.Now().Before(deadline) {
+		registrations, err := store.ListPeerRegistrations(persist.PeerListFilter{
+			Scope:       persist.PeerScopeMachine,
+			IncludeSelf: true,
+		})
+		if err != nil {
+			t.Fatalf("ListPeerRegistrations() error = %v", err)
+		}
+		if len(registrations) > 0 {
+			peerID = registrations[0].PeerID
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if peerID == "" {
+		t.Fatalf("peer registration was not created for snapshot %#v", created)
+	}
+
+	createMessage := func(body string, createdAt time.Time) int64 {
+		messageID, err := store.CreatePeerMessage(persist.PeerMessageRecord{
+			FromPeerID: "sender",
+			ToPeerID:   peerID,
+			FromLabel:  "Sender",
+			FromTitle:  "Sender",
+			Body:       body,
+			Status:     persist.PeerMessageStatusQueued,
+			CreatedAt:  createdAt,
+		})
+		if err != nil {
+			t.Fatalf("CreatePeerMessage(%q) error = %v", body, err)
+		}
+		return messageID
+	}
+
+	assertOutstandingCount := func(label string, want int) {
+		snapshot := manager.Snapshot()
+		for _, repo := range snapshot.Repos {
+			for _, worktree := range repo.Worktrees {
+				for _, session := range worktree.Sessions {
+					if session.ID != sessionID {
+						continue
+					}
+					if session.OutstandingPeerCount != want {
+						t.Fatalf("%s outstanding count = %d, want %d", label, session.OutstandingPeerCount, want)
+					}
+					return
+				}
+			}
+		}
+		t.Fatalf("%s session %d not found in snapshot %#v", label, sessionID, snapshot)
+	}
+
+	now := time.Unix(1710000000, 0)
+	firstID := createMessage("First message", now)
+	manager.peerRuntime.invalidateSnapshot()
+	warmDelete := manager.PeerState()
+	if len(warmDelete.Messages) != 1 || warmDelete.Messages[0].ID != firstID {
+		t.Fatalf("warm delete peer state = %#v, want first message cached", warmDelete)
+	}
+
+	afterDelete, err := manager.DeletePeerMessage(firstID)
+	if err != nil {
+		t.Fatalf("DeletePeerMessage() error = %v", err)
+	}
+	if len(afterDelete.Messages) != 0 {
+		t.Fatalf("DeletePeerMessage() peer state = %#v, want no messages", afterDelete)
+	}
+	assertOutstandingCount("after delete", 0)
+
+	secondID := createMessage("Second message", now.Add(time.Second))
+	thirdID := createMessage("Third message", now.Add(2*time.Second))
+	manager.peerRuntime.invalidateSnapshot()
+	warmClear := manager.PeerState()
+	if len(warmClear.Messages) != 2 {
+		t.Fatalf("warm clear peer state len = %d, want 2", len(warmClear.Messages))
+	}
+	if warmClear.Messages[0].ID != thirdID || warmClear.Messages[1].ID != secondID {
+		t.Fatalf("warm clear peer state = %#v, want second and third messages cached", warmClear)
+	}
+
+	afterClear, err := manager.ClearPeerMessages()
+	if err != nil {
+		t.Fatalf("ClearPeerMessages() error = %v", err)
+	}
+	if len(afterClear.Messages) != 0 {
+		t.Fatalf("ClearPeerMessages() peer state = %#v, want no messages", afterClear)
+	}
+	assertOutstandingCount("after clear", 0)
 }
 
 func findWorktreeDTO(worktrees []WorktreeDTO, id int) *WorktreeDTO {

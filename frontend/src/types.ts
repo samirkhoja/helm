@@ -149,6 +149,13 @@ export interface WorktreeEntry {
   expandable: boolean;
 }
 
+export interface WorktreeContentMatch {
+  path: string;
+  line: number;
+  column: number;
+  preview: string;
+}
+
 export interface WorktreeFile {
   path: string;
   content: string;
