@@ -265,8 +265,8 @@ func TestSQLiteStoreMigratesToV1(t *testing.T) {
 	if err := store.db.QueryRowContext(context.Background(), `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != schemaVersion {
-		t.Fatalf("user_version = %d, want %d", version, schemaVersion)
+	if version != currentSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", version, currentSchemaVersion)
 	}
 }
 
@@ -428,6 +428,97 @@ func TestSQLiteStoreMigratesV3TerminalFontSize(t *testing.T) {
 	}
 	if data.UIState.TerminalFontSize != defaultTerminalFontSize {
 		t.Fatalf("TerminalFontSize = %d, want %d", data.UIState.TerminalFontSize, defaultTerminalFontSize)
+	}
+}
+
+func TestSQLiteStoreOpensCompatibleV5Schema(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "state-v5.db")
+	store, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+
+	if _, err := db.Exec(`
+		ALTER TABLE sessions
+		ADD COLUMN session_role TEXT NOT NULL DEFAULT 'standard'
+	`); err != nil {
+		t.Fatalf("add sessions.session_role column: %v", err)
+	}
+	if _, err := db.Exec(`
+		ALTER TABLE ui_state
+		ADD COLUMN preferred_orchestrator_agent_id TEXT NOT NULL DEFAULT ''
+	`); err != nil {
+		t.Fatalf("add ui_state.preferred_orchestrator_agent_id column: %v", err)
+	}
+	if _, err := db.Exec(`
+		UPDATE ui_state
+		SET preferred_orchestrator_agent_id = 'orchestrator'
+		WHERE id = 1
+	`); err != nil {
+		t.Fatalf("update preferred_orchestrator_agent_id: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 5`); err != nil {
+		t.Fatalf("set user_version: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("db.Close() error = %v", err)
+	}
+
+	reopened, err := OpenSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore(v5) error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = reopened.Close()
+	})
+
+	recordID, err := reopened.CreateSession(SessionRecord{
+		WorktreeRootPath: "/tmp/repo",
+		AdapterID:        "shell",
+		Label:            "Shell",
+		Title:            "Shell 1",
+		CWDPath:          "/tmp/repo",
+	}, "shell")
+	if err != nil {
+		t.Fatalf("CreateSession() on v5 schema error = %v", err)
+	}
+	if err := reopened.SaveUIPreferences(UIState{
+		SidebarOpen:       true,
+		SidebarWidth:      320,
+		DiffPanelOpen:     false,
+		DiffPanelWidth:    360,
+		TerminalFontSize:  16,
+		UtilityPanelTab:   "peers",
+		CollapsedRepoKeys: []string{"repo-a"},
+	}); err != nil {
+		t.Fatalf("SaveUIPreferences() on v5 schema error = %v", err)
+	}
+
+	data, err := reopened.Load()
+	if err != nil {
+		t.Fatalf("Load() on v5 schema error = %v", err)
+	}
+	if len(data.Sessions) != 1 || data.Sessions[0].ID != recordID {
+		t.Fatalf("sessions = %#v, want persisted session %d", data.Sessions, recordID)
+	}
+	if data.UIState.TerminalFontSize != 16 {
+		t.Fatalf("TerminalFontSize = %d, want 16", data.UIState.TerminalFontSize)
+	}
+	if data.UIState.UtilityPanelTab != "peers" {
+		t.Fatalf("UtilityPanelTab = %q, want peers", data.UIState.UtilityPanelTab)
 	}
 }
 

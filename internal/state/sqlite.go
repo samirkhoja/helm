@@ -14,7 +14,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 4
+const (
+	currentSchemaVersion       = 4
+	maxCompatibleSchemaVersion = 5
+)
 
 type SQLiteStore struct {
 	db   *sql.DB
@@ -900,8 +903,13 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 		if err := s.migrateV4(ctx); err != nil {
 			return err
 		}
-	case version == schemaVersion:
+	case version == currentSchemaVersion:
 		// Current schema.
+	case version == maxCompatibleSchemaVersion:
+		// Schema v5 only adds columns that this binary does not read or write directly:
+		// sessions.session_role and ui_state.preferred_orchestrator_agent_id.
+		// Keeping v4 as the writable schema avoids silently fabricating a partial v5 on
+		// fresh installs while still allowing existing user state to load.
 	default:
 		return fmt.Errorf("unsupported state schema version %d", version)
 	}
