@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -823,4 +825,42 @@ func newTestStore(t *testing.T) *SQLiteStore {
 		t.Fatalf("OpenSQLiteStore() error = %v", err)
 	}
 	return store
+}
+
+func TestOpenSQLiteStoreTightensFileAndDirectoryPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file permissions are not enforced on this platform")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "nested", "state.db")
+
+	store, err := OpenSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	if err := store.SetLastUsedAgentID("shell"); err != nil {
+		t.Fatalf("SetLastUsedAgentID() error = %v", err)
+	}
+
+	dirInfo, err := os.Stat(filepath.Dir(dbPath))
+	if err != nil {
+		t.Fatalf("Stat(dir) error = %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("state directory perms = %o, want 0700 (other users must not read peer tokens)", got)
+	}
+
+	fileInfo, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("Stat(db) error = %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state db perms = %o, want 0600 (other users must not tamper with peer message queue)", got)
+	}
 }
