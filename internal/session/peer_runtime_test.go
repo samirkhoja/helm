@@ -1,12 +1,15 @@
 package session
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"helm-wails/internal/peer"
 	persist "helm-wails/internal/state"
 )
 
@@ -102,5 +105,69 @@ func TestPeerRuntimeDeliverQueuedWritesInterruptAndDedupes(t *testing.T) {
 
 	if err := store.MarkPeerMessagesRead("receiver", []int64{firstID, secondID}, now.Add(4*time.Second)); err != nil {
 		t.Fatalf("MarkPeerMessagesRead() error = %v", err)
+	}
+}
+
+func TestPeerRuntimeTokenFileHasRestrictivePermissionsAndIsRemovedOnUnregister(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file permissions are not enforced on this platform")
+	}
+
+	supportRoot := t.TempDir()
+	t.Setenv("HELM_PEER_SUPPORT_ROOT", supportRoot)
+
+	support, err := peer.NewSupportManager("/tmp/helm-binary")
+	if err != nil {
+		t.Fatalf("NewSupportManager() error = %v", err)
+	}
+
+	store, err := persist.OpenSQLiteStore(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	r := newPeerRuntime(store, support, func(int, string) error { return nil }, nil)
+
+	tokenPath, err := r.writePeerTokenFile("shell-abcdef", "secret-token-value")
+	if err != nil {
+		t.Fatalf("writePeerTokenFile() error = %v", err)
+	}
+
+	info, err := os.Stat(tokenPath)
+	if err != nil {
+		t.Fatalf("Stat(token) error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("token file perms = %o, want 0600", got)
+	}
+
+	dirInfo, err := os.Stat(filepath.Dir(tokenPath))
+	if err != nil {
+		t.Fatalf("Stat(token dir) error = %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("token dir perms = %o, want 0700", got)
+	}
+
+	contents, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatalf("ReadFile(token) error = %v", err)
+	}
+	if string(contents) != "secret-token-value" {
+		t.Fatalf("token file contents = %q, want secret-token-value", contents)
+	}
+
+	// Register so unregisterSession has state to work with, then unregister
+	// and verify the token file is removed from disk.
+	if err := r.registerSession(7, &peerLaunchState{PeerID: "shell-abcdef", Token: "secret-token-value"}, "/tmp/repo", "repo-key", "shell", "shell", "shell", "shell"); err != nil {
+		t.Fatalf("registerSession() error = %v", err)
+	}
+	r.unregisterSession(7, "test-cleanup")
+
+	if _, err := os.Stat(tokenPath); !os.IsNotExist(err) {
+		t.Fatalf("token file still present after unregister: err = %v", err)
 	}
 }

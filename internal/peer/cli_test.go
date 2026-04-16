@@ -637,6 +637,114 @@ func TestCLIListTextShowsSessionTitle(t *testing.T) {
 	}
 }
 
+func TestReadPeerTokenPrefersTokenFileOverEnvironment(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "peer.token")
+	if err := os.WriteFile(tokenPath, []byte("file-token\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(token) error = %v", err)
+	}
+
+	t.Setenv("HELM_PEER_TOKEN_FILE", tokenPath)
+	t.Setenv("HELM_PEER_TOKEN", "env-token")
+
+	got := readPeerToken()
+	if got != "file-token" {
+		t.Fatalf("readPeerToken() = %q, want file-token (token file must win over env)", got)
+	}
+}
+
+func TestReadPeerTokenFallsBackToEnvironmentWhenFileMissing(t *testing.T) {
+	t.Setenv("HELM_PEER_TOKEN_FILE", filepath.Join(t.TempDir(), "missing.token"))
+	t.Setenv("HELM_PEER_TOKEN", "env-token")
+
+	if got := readPeerToken(); got != "env-token" {
+		t.Fatalf("readPeerToken() = %q, want env-token fallback", got)
+	}
+}
+
+func TestCLIAuthenticatesUsingTokenFile(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	store, err := persist.OpenSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	now := time.Unix(1710000000, 0)
+	senderToken := "sender-token"
+
+	for _, record := range []persist.PeerRegistrationRecord{
+		{
+			PeerID:            "sender",
+			TokenHash:         HashToken(senderToken),
+			RuntimeInstanceID: "runtime-a",
+			SessionID:         1,
+			WorktreeRootPath:  "/tmp/repo",
+			RepoKey:           "repo-key",
+			AdapterID:         "codex",
+			AdapterFamily:     "codex",
+			Label:             "Sender",
+			Title:             "Sender",
+			CreatedAt:         now,
+			LastHeartbeatAt:   now,
+		},
+		{
+			PeerID:            "receiver",
+			TokenHash:         HashToken("receiver-token"),
+			RuntimeInstanceID: "runtime-b",
+			SessionID:         2,
+			WorktreeRootPath:  "/tmp/repo",
+			RepoKey:           "repo-key",
+			AdapterID:         "claude-code",
+			AdapterFamily:     "claude",
+			Label:             "Receiver",
+			Title:             "Receiver",
+			CreatedAt:         now,
+			LastHeartbeatAt:   now,
+		},
+	} {
+		if err := store.UpsertPeerRegistration(record); err != nil {
+			t.Fatalf("UpsertPeerRegistration(%s) error = %v", record.PeerID, err)
+		}
+	}
+
+	tokenFile := filepath.Join(t.TempDir(), "sender.token")
+	if err := os.WriteFile(tokenFile, []byte(senderToken), 0o600); err != nil {
+		t.Fatalf("WriteFile(token file) error = %v", err)
+	}
+
+	t.Setenv("HELM_PEER_DB_PATH", dbPath)
+	t.Setenv("HELM_PEER_ID", "sender")
+	t.Setenv("HELM_PEER_TOKEN_FILE", tokenFile)
+	// HELM_PEER_TOKEN intentionally unset: authentication must succeed
+	// purely through the token file.
+	os.Unsetenv("HELM_PEER_TOKEN")
+
+	var stdout bytes.Buffer
+	cli := CLI{
+		Stdout: &stdout,
+		Stderr: &bytes.Buffer{},
+		Now: func() time.Time {
+			return now
+		},
+	}
+
+	if err := cli.Run([]string{"list", "--json"}); err != nil {
+		t.Fatalf("CLI.Run(list) error = %v", err)
+	}
+
+	var peers []struct {
+		PeerID string `json:"peerId"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &peers); err != nil {
+		t.Fatalf("json.Unmarshal(list) error = %v", err)
+	}
+	if len(peers) != 1 || peers[0].PeerID != "receiver" {
+		t.Fatalf("list peers = %#v, want receiver only", peers)
+	}
+}
+
 func TestCLIInboxDefaultsToReadOnly(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "state.db")
 	store, err := persist.OpenSQLiteStore(dbPath)

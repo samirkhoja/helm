@@ -3,6 +3,8 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -136,10 +138,15 @@ func (r *peerRuntime) prepareSessionShellEnv(env []string) ([]string, *peerLaunc
 		return env, nil, err
 	}
 
+	tokenFile, err := r.writePeerTokenFile(peerID, token)
+	if err != nil {
+		return env, nil, err
+	}
+
 	env = mergeLaunchEnv(env, launchSupport.Env)
 	env = mergeLaunchEnv(env, map[string]string{
 		"HELM_PEER_ID":                peerID,
-		"HELM_PEER_TOKEN":             token,
+		"HELM_PEER_TOKEN_FILE":        tokenFile,
 		"HELM_PEER_DB_PATH":           r.store.DBPath(),
 		"HELM_PEER_SUPPORT_ROOT":      r.support.Root(),
 		peer.DefaultScopeEnv:          persist.PeerScopeRepo,
@@ -151,6 +158,39 @@ func (r *peerRuntime) prepareSessionShellEnv(env []string) ([]string, *peerLaunc
 		PeerID: peerID,
 		Token:  token,
 	}, nil
+}
+
+func (r *peerRuntime) peerTokensDir() string {
+	if r == nil || r.support == nil {
+		return ""
+	}
+	return filepath.Join(r.support.Root(), "tokens", r.runtimeID)
+}
+
+func (r *peerRuntime) writePeerTokenFile(peerID, token string) (string, error) {
+	dir := r.peerTokensDir()
+	if dir == "" {
+		return "", fmt.Errorf("peer support root is not configured")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create peer token directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("tighten peer token directory permissions: %w", err)
+	}
+	tokenPath := filepath.Join(dir, peerID+".token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		return "", fmt.Errorf("write peer token file: %w", err)
+	}
+	return tokenPath, nil
+}
+
+func (r *peerRuntime) removePeerTokenFile(peerID string) {
+	dir := r.peerTokensDir()
+	if dir == "" || strings.TrimSpace(peerID) == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(dir, peerID+".token"))
 }
 
 func (r *peerRuntime) prepareShellAdapterSpec(spec agent.LaunchSpec) (agent.LaunchSpec, error) {
@@ -234,6 +274,7 @@ func (r *peerRuntime) unregisterSession(sessionID int, reason string) {
 
 	_ = r.store.FailPeerMessages(state.PeerID, time.Now(), reason)
 	_ = r.store.RemovePeerRegistration(state.PeerID)
+	r.removePeerTokenFile(state.PeerID)
 }
 
 func (r *peerRuntime) invalidateSnapshot() {
