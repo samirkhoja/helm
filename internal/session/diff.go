@@ -126,13 +126,15 @@ func gitUntracked(gitPath, rootPath string) []string {
 }
 
 func loadFileDiff(worktreeID int, rootPath, path string, staged bool) (FileDiff, error) {
+	normalizedPath, err := normalizeWorktreeRelativePath(path, false)
+	if err != nil {
+		return FileDiff{}, err
+	}
+
 	diff := FileDiff{
 		WorktreeID: worktreeID,
-		Path:       filepath.Clean(strings.TrimSpace(path)),
+		Path:       filepath.ToSlash(normalizedPath),
 		Staged:     staged,
-	}
-	if diff.Path == "" || diff.Path == "." {
-		return diff, fmt.Errorf("file path is required")
 	}
 
 	gitPath, err := exec.LookPath("git")
@@ -146,11 +148,14 @@ func loadFileDiff(worktreeID int, rootPath, path string, staged bool) (FileDiff,
 	}
 
 	if staged {
-		diff.Patch = gitFilePatch(gitPath, rootPath, diff.Path, true)
+		diff.Patch = gitFilePatch(gitPath, rootPath, normalizedPath, true)
 	} else {
-		diff.Patch = gitFilePatch(gitPath, rootPath, diff.Path, false)
+		diff.Patch = gitFilePatch(gitPath, rootPath, normalizedPath, false)
 		if diff.Patch == "" {
-			diff.Patch = gitUntrackedFilePatch(gitPath, rootPath, diff.Path)
+			resolvedPath, _, rErr := resolveWorktreePath(rootPath, normalizedPath, false)
+			if rErr == nil {
+				diff.Patch = gitUntrackedFilePatch(gitPath, rootPath, resolvedPath)
+			}
 		}
 	}
 
@@ -174,9 +179,8 @@ func gitFilePatch(gitPath, rootPath, path string, staged bool) string {
 	return strings.TrimRight(string(bytes.TrimSpace(out)), "\n")
 }
 
-func gitUntrackedFilePatch(gitPath, rootPath, path string) string {
-	targetPath := filepath.Join(rootPath, path)
-	cmd := exec.Command(gitPath, "-C", rootPath, "diff", "--no-index", "--no-color", "--patch", "--", "/dev/null", targetPath)
+func gitUntrackedFilePatch(gitPath, rootPath, resolvedPath string) string {
+	cmd := exec.Command(gitPath, "-C", rootPath, "diff", "--no-index", "--no-color", "--patch", "--", "/dev/null", resolvedPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		var exitErr *exec.ExitError
