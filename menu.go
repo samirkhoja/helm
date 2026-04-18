@@ -57,7 +57,7 @@ func buildMenu(app *App) *menu.Menu {
 	shellMenu.AddText("Toggle Files Panel", keys.Combo("e", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
 		app.emitMenuAction(menuActionToggleFiles)
 	})
-	shellMenu.AddText("Toggle Shell Panel", nil, func(_ *menu.CallbackData) {
+	shellMenu.AddText("Toggle Shell Panel", keys.Combo("s", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
 		app.emitMenuAction(menuActionToggleShell)
 	})
 	shellMenu.AddText("Toggle Peers Panel", keys.Combo("p", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
