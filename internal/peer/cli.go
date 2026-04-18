@@ -458,7 +458,7 @@ func (cli CLI) runSetSummary(store *persist.SQLiteStore, args []string) error {
 
 func currentPeerRegistration(store *persist.SQLiteStore) (persist.PeerRegistrationRecord, error) {
 	peerID := strings.TrimSpace(os.Getenv("HELM_PEER_ID"))
-	token := strings.TrimSpace(os.Getenv("HELM_PEER_TOKEN"))
+	token := readPeerToken()
 	if peerID == "" || token == "" {
 		return persist.PeerRegistrationRecord{}, errors.New("peer session credentials are not set")
 	}
@@ -566,4 +566,17 @@ func writeJSON(writer io.Writer, value any) error {
 	encoder := json.NewEncoder(writer)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(value)
+}
+
+// readPeerToken returns the peer token, preferring a token file (pointed to by
+// HELM_PEER_TOKEN_FILE) over the HELM_PEER_TOKEN environment variable. The file
+// approach avoids leaking credentials via process environment listings.
+func readPeerToken() string {
+	if tokenFile := strings.TrimSpace(os.Getenv("HELM_PEER_TOKEN_FILE")); tokenFile != "" {
+		data, err := os.ReadFile(tokenFile)
+		if err == nil {
+			return strings.TrimSpace(string(data))
+		}
+	}
+	return strings.TrimSpace(os.Getenv("HELM_PEER_TOKEN"))
 }

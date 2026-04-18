@@ -35,9 +35,12 @@ func OpenSQLiteStoreReadOnly(path string) (*SQLiteStore, error) {
 func openSQLiteStore(path string, readOnly bool) (*SQLiteStore, error) {
 	path = filepath.Clean(path)
 	if !readOnly {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create state directory: %w", err)
 		}
+		// Tighten permissions on pre-existing directories (helm < 0.1.1 used 0o755).
+		_ = os.Chmod(dir, 0o700)
 	}
 
 	dsn := path
@@ -56,6 +59,14 @@ func openSQLiteStore(path string, readOnly bool) (*SQLiteStore, error) {
 		if err := store.migrate(context.Background()); err != nil {
 			_ = db.Close()
 			return nil, err
+		}
+		// SQLite creates the db file with default umask permissions (often 0o644).
+		// Tighten to 0o600 so other users on the machine cannot read peer tokens
+		// or tamper with peer message queues. Ignore errors: the file may not
+		// exist yet on a fresh DSN, and WAL/SHM files are best-effort.
+		_ = os.Chmod(path, 0o600)
+		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+			_ = os.Chmod(path+suffix, 0o600)
 		}
 	}
 	return store, nil

@@ -127,6 +127,62 @@ func TestLoadFileDiffReturnsPatchForSelectedFile(t *testing.T) {
 	}
 }
 
+func TestLoadFileDiffRejectsPathTraversal(t *testing.T) {
+	t.Parallel()
+
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+
+	parent := t.TempDir()
+	// Place a sensitive file outside the worktree; a path-traversal payload
+	// must not be able to reference it through the diff view.
+	outside := filepath.Join(parent, "secret.txt")
+	if err := os.WriteFile(outside, []byte("top-secret\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(outside) error = %v", err)
+	}
+
+	root := filepath.Join(parent, "worktree")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll(worktree) error = %v", err)
+	}
+	runGit(t, gitPath, root, "init")
+	runGit(t, gitPath, root, "config", "user.email", "helm@example.com")
+	runGit(t, gitPath, root, "config", "user.name", "Helm Test")
+	if err := os.WriteFile(filepath.Join(root, "tracked.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(tracked) error = %v", err)
+	}
+	runGit(t, gitPath, root, "add", "tracked.txt")
+	runGit(t, gitPath, root, "commit", "-m", "initial")
+
+	traversalPaths := []string{
+		"../secret.txt",
+		"subdir/../../secret.txt",
+		"/etc/passwd",
+		"..",
+	}
+
+	for _, candidate := range traversalPaths {
+		if _, err := loadFileDiff(1, root, candidate, false); err == nil {
+			t.Fatalf("loadFileDiff(%q) error = nil, want rejection", candidate)
+		}
+		if _, err := loadFileDiff(1, root, candidate, true); err == nil {
+			t.Fatalf("loadFileDiff(%q, staged) error = nil, want rejection", candidate)
+		}
+	}
+
+	// A symlink that points outside the worktree must also be rejected when
+	// the file path resolves through it.
+	if err := os.Symlink(outside, filepath.Join(root, "leak")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	fileDiff, err := loadFileDiff(1, root, "leak", false)
+	if err == nil && strings.Contains(fileDiff.Patch, "top-secret") {
+		t.Fatalf("loadFileDiff(symlink) leaked contents: %q", fileDiff.Patch)
+	}
+}
+
 func runGit(t *testing.T, gitPath, root string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(gitPath, append([]string{"-C", root}, args...)...)
