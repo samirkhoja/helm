@@ -136,6 +136,30 @@ func (s *fakeStarter) spec(sessionID int) agent.LaunchSpec {
 	return s.specs[sessionID]
 }
 
+type blockingStarter struct {
+	inner   *fakeStarter
+	started chan int
+	release chan struct{}
+}
+
+func newBlockingStarter(inner *fakeStarter) *blockingStarter {
+	return &blockingStarter{
+		inner:   inner,
+		started: make(chan int, 8),
+		release: make(chan struct{}),
+	}
+}
+
+func (s *blockingStarter) Start(spec agent.LaunchSpec, meta StartMeta, sink EventSink, onExit ExitHandler) (Handle, error) {
+	handle, err := s.inner.Start(spec, meta, sink, onExit)
+	if err != nil {
+		return nil, err
+	}
+	s.started <- meta.SessionID
+	<-s.release
+	return handle, nil
+}
+
 type fakeHandle struct {
 	meta      StartMeta
 	writes    []string
@@ -653,6 +677,213 @@ func TestManagerKillSessionSuppressesExitLifecycleDuringIntentionalClose(t *test
 	}
 	if payload.Status != "killed" {
 		t.Fatalf("lifecycle status = %q, want killed", payload.Status)
+	}
+}
+
+func TestManagerEnsureWorktreeShellSessionIsEphemeralAndCleanedUp(t *testing.T) {
+	t.Parallel()
+
+	baseStore := newTestStore(t)
+	counting := &countingStore{Store: baseStore}
+	starter := newFakeStarter()
+	manager := NewManager(newTestRegistry(t), os.Environ(), starter, &fakeSink{}, counting)
+
+	root := t.TempDir()
+	snapshot, err := manager.CreateWorkspaceSession(root, "codex")
+	if err != nil {
+		t.Fatalf("CreateWorkspaceSession(codex) error = %v", err)
+	}
+
+	worktree := snapshot.Repos[0].Worktrees[0]
+	primarySession := worktree.Sessions[0]
+	if primarySession.Role != SessionRolePrimary {
+		t.Fatalf("primary session role = %q, want %q", primarySession.Role, SessionRolePrimary)
+	}
+
+	snapshot, err = manager.EnsureWorktreeShellSession(worktree.ID)
+	if err != nil {
+		t.Fatalf("EnsureWorktreeShellSession() error = %v", err)
+	}
+
+	worktree = snapshot.Repos[0].Worktrees[0]
+	if len(worktree.Sessions) != 2 {
+		t.Fatalf("worktree sessions = %#v, want primary + utility shell", worktree.Sessions)
+	}
+
+	var utilityShell SessionDTO
+	foundUtilityShell := false
+	for _, session := range worktree.Sessions {
+		if session.Role != SessionRoleUtilityShell {
+			continue
+		}
+		utilityShell = session
+		foundUtilityShell = true
+		break
+	}
+	if !foundUtilityShell {
+		t.Fatalf("worktree sessions = %#v, want utility shell session", worktree.Sessions)
+	}
+	if utilityShell.AdapterID != "shell" {
+		t.Fatalf("utility shell adapter = %q, want shell", utilityShell.AdapterID)
+	}
+
+	data, err := counting.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(data.Sessions) != 1 {
+		t.Fatalf("persisted sessions = %#v, want only primary session", data.Sessions)
+	}
+
+	nextSnapshot, err := manager.KillSession(primarySession.ID)
+	if err != nil {
+		t.Fatalf("KillSession(primary) error = %v", err)
+	}
+	if len(nextSnapshot.Repos) != 0 {
+		t.Fatalf("snapshot after primary kill = %#v, want no repos", nextSnapshot)
+	}
+	if got := counting.deleteCalls(); got != 1 {
+		t.Fatalf("DeleteSession() calls = %d, want 1 primary delete", got)
+	}
+	if handle := starter.handle(utilityShell.ID); handle == nil || !handle.closed {
+		t.Fatalf("utility shell handle = %#v, want closed handle", handle)
+	}
+}
+
+func TestManagerEnsureWorktreeShellSessionDedupesConcurrentCalls(t *testing.T) {
+	t.Parallel()
+
+	starter := newFakeStarter()
+	manager := NewManager(newTestRegistry(t), os.Environ(), starter, &fakeSink{}, newTestStore(t))
+
+	root := t.TempDir()
+	snapshot, err := manager.CreateWorkspaceSession(root, "codex")
+	if err != nil {
+		t.Fatalf("CreateWorkspaceSession(codex) error = %v", err)
+	}
+
+	worktreeID := snapshot.Repos[0].Worktrees[0].ID
+	blocking := newBlockingStarter(starter)
+	manager.starter = blocking
+
+	type ensureResult struct {
+		snapshot AppSnapshot
+		err      error
+	}
+	firstResult := make(chan ensureResult, 1)
+	secondResult := make(chan ensureResult, 1)
+
+	go func() {
+		nextSnapshot, ensureErr := manager.EnsureWorktreeShellSession(worktreeID)
+		firstResult <- ensureResult{snapshot: nextSnapshot, err: ensureErr}
+	}()
+
+	utilityShellID := <-blocking.started
+
+	go func() {
+		nextSnapshot, ensureErr := manager.EnsureWorktreeShellSession(worktreeID)
+		secondResult <- ensureResult{snapshot: nextSnapshot, err: ensureErr}
+	}()
+
+	select {
+	case extraSessionID := <-blocking.started:
+		t.Fatalf("started extra utility shell session %d, want only one", extraSessionID)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(blocking.release)
+
+	first := <-firstResult
+	second := <-secondResult
+	if first.err != nil {
+		t.Fatalf("first EnsureWorktreeShellSession() error = %v", first.err)
+	}
+	if second.err != nil {
+		t.Fatalf("second EnsureWorktreeShellSession() error = %v", second.err)
+	}
+
+	worktree := first.snapshot.Repos[0].Worktrees[0]
+	if len(worktree.Sessions) != 2 {
+		t.Fatalf("worktree sessions = %#v, want one primary and one utility shell", worktree.Sessions)
+	}
+
+	utilityShellCount := 0
+	for _, session := range worktree.Sessions {
+		if session.Role == SessionRoleUtilityShell {
+			utilityShellCount++
+		}
+	}
+	if utilityShellCount != 1 {
+		t.Fatalf("utility shell sessions = %#v, want exactly one", worktree.Sessions)
+	}
+	if handle := starter.handle(utilityShellID); handle == nil {
+		t.Fatalf("utility shell handle = %#v, want started handle", handle)
+	}
+	if len(second.snapshot.Repos[0].Worktrees[0].Sessions) != len(worktree.Sessions) {
+		t.Fatalf("second snapshot sessions = %#v, want same session count as first", second.snapshot.Repos[0].Worktrees[0].Sessions)
+	}
+}
+
+func TestManagerEnsureWorktreeShellSessionCancelsWhenLastPrimarySessionCloses(t *testing.T) {
+	t.Parallel()
+
+	baseStore := newTestStore(t)
+	counting := &countingStore{Store: baseStore}
+	starter := newFakeStarter()
+	manager := NewManager(newTestRegistry(t), os.Environ(), starter, &fakeSink{}, counting)
+
+	root := t.TempDir()
+	snapshot, err := manager.CreateWorkspaceSession(root, "codex")
+	if err != nil {
+		t.Fatalf("CreateWorkspaceSession(codex) error = %v", err)
+	}
+
+	worktree := snapshot.Repos[0].Worktrees[0]
+	primarySession := worktree.Sessions[0]
+	blocking := newBlockingStarter(starter)
+	manager.starter = blocking
+
+	type ensureResult struct {
+		snapshot AppSnapshot
+		err      error
+	}
+	resultCh := make(chan ensureResult, 1)
+
+	go func() {
+		nextSnapshot, ensureErr := manager.EnsureWorktreeShellSession(worktree.ID)
+		resultCh <- ensureResult{snapshot: nextSnapshot, err: ensureErr}
+	}()
+
+	utilityShellID := <-blocking.started
+
+	nextSnapshot, err := manager.KillSession(primarySession.ID)
+	if err != nil {
+		t.Fatalf("KillSession(primary) error = %v", err)
+	}
+	if len(nextSnapshot.Repos) != 0 {
+		t.Fatalf("snapshot after killing primary = %#v, want no repos", nextSnapshot)
+	}
+
+	close(blocking.release)
+
+	result := <-resultCh
+	if result.err == nil {
+		t.Fatalf("EnsureWorktreeShellSession() error = nil, want cancellation error")
+	}
+	if !strings.Contains(result.err.Error(), "no longer available") {
+		t.Fatalf("EnsureWorktreeShellSession() error = %v, want no longer available", result.err)
+	}
+	if len(result.snapshot.Repos) != 0 {
+		t.Fatalf("ensure snapshot = %#v, want no repos after cancellation", result.snapshot)
+	}
+	if got := counting.deleteCalls(); got != 1 {
+		t.Fatalf("DeleteSession() calls = %d, want only the primary session delete", got)
+	}
+	if handle := starter.handle(utilityShellID); handle == nil || !handle.closed {
+		t.Fatalf("utility shell handle = %#v, want closed handle after cancellation", handle)
+	}
+	if finalSnapshot := manager.Snapshot(); len(finalSnapshot.Repos) != 0 {
+		t.Fatalf("final snapshot = %#v, want no repos", finalSnapshot)
 	}
 }
 

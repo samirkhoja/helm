@@ -10,6 +10,8 @@ export function ChooseWorkspace():Promise<session.WorkspaceChoice>;
 
 export function ClearPeerMessages():Promise<session.PeerStateDTO>;
 
+export function CommitWorktree(arg1:number,arg2:string):Promise<session.GitActionResult>;
+
 export function ConfirmClearPeerMessages():Promise<boolean>;
 
 export function ConfirmDiscardFileChanges():Promise<boolean>;
@@ -18,11 +20,19 @@ export function CreateSession(arg1:number,arg2:string):Promise<session.AppSnapsh
 
 export function CreateWorkspaceSession(arg1:string,arg2:string):Promise<session.AppSnapshot>;
 
+export function CreateWorktreeBranch(arg1:number,arg2:string):Promise<session.AppSnapshot>;
+
 export function CreateWorktreeSession(arg1:number,arg2:session.WorktreeCreateRequest):Promise<session.AppSnapshot>;
 
 export function DeletePeerMessage(arg1:number):Promise<session.PeerStateDTO>;
 
+export function EnsureWorktreeShellSession(arg1:number):Promise<session.AppSnapshot>;
+
+export function GetCommitRangeDiff(arg1:number,arg2:string,arg3:string):Promise<session.CommitDiff>;
+
 export function GetFileDiff(arg1:number,arg2:string,arg3:boolean):Promise<session.FileDiff>;
+
+export function GetWorktreeCommitHistory(arg1:number,arg2:number):Promise<Array<session.GitCommitSummary>>;
 
 export function GetWorktreeDiff(arg1:number):Promise<session.WorktreeDiff>;
 
@@ -31,6 +41,8 @@ export function KillSession(arg1:number):Promise<session.AppSnapshot>;
 export function ListWorktreeEntries(arg1:number,arg2:string):Promise<Array<session.WorktreeEntry>>;
 
 export function ListWorktreeFiles(arg1:number):Promise<Array<string>>;
+
+export function PushWorktree(arg1:number):Promise<session.GitActionResult>;
 
 export function ReadWorktreeFile(arg1:number,arg2:string):Promise<session.WorktreeFile>;
 
@@ -45,6 +57,8 @@ export function SearchWorktreeContents(arg1:number,arg2:string,arg3:number):Prom
 export function SendSessionInput(arg1:number,arg2:string):Promise<void>;
 
 export function ShowWindow():Promise<void>;
+
+export function StageWorktreeAll(arg1:number):Promise<session.GitActionResult>;
 
 export function UpdateSessionCWD(arg1:number,arg2:string):Promise<void>;
 

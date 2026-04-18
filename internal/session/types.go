@@ -10,6 +10,9 @@ const (
 
 	WorktreeModeNewBranch      = "new-branch"
 	WorktreeModeExistingBranch = "existing-branch"
+
+	SessionRolePrimary      = "primary"
+	SessionRoleUtilityShell = "utility-shell"
 )
 
 type AgentDTO struct {
@@ -20,6 +23,7 @@ type AgentDTO struct {
 type SessionDTO struct {
 	ID                   int    `json:"id"`
 	WorktreeID           int    `json:"worktreeId"`
+	Role                 string `json:"role"`
 	AdapterID            string `json:"adapterId"`
 	Label                string `json:"label"`
 	Title                string `json:"title"`
@@ -152,6 +156,26 @@ type FileDiff struct {
 	WorktreeID int    `json:"worktreeId"`
 	Path       string `json:"path"`
 	Staged     bool   `json:"staged"`
+	Patch      string `json:"patch"`
+	Message    string `json:"message"`
+}
+
+type GitActionResult struct {
+	Message string `json:"message"`
+}
+
+type GitCommitSummary struct {
+	Hash       string `json:"hash"`
+	ShortHash  string `json:"shortHash"`
+	Subject    string `json:"subject"`
+	AuthorName string `json:"authorName"`
+	AuthorDate string `json:"authorDate"`
+}
+
+type CommitDiff struct {
+	WorktreeID int    `json:"worktreeId"`
+	BaseRef    string `json:"baseRef"`
+	HeadRef    string `json:"headRef"`
 	Patch      string `json:"patch"`
 	Message    string `json:"message"`
 }

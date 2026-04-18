@@ -62,6 +62,7 @@ const ACTION_REGISTRY: PaletteActionItem[] = [
   { kind: "action", id: "a:toggle-sidebar", action: "toggle-sidebar", label: "Toggle Sidebar", shortcut: "\u2318B" },
   { kind: "action", id: "a:toggle-diff", action: "toggle-diff", label: "Toggle Diff Panel", shortcut: "\u21E7\u2318D" },
   { kind: "action", id: "a:toggle-files", action: "toggle-files", label: "Toggle Files Panel", shortcut: "\u21E7\u2318E" },
+  { kind: "action", id: "a:toggle-shell", action: "toggle-shell", label: "Toggle Shell Panel", shortcut: "" },
   { kind: "action", id: "a:toggle-peers", action: "toggle-peers", label: "Toggle Peers Panel", shortcut: "\u21E7\u2318P" },
   { kind: "action", id: "a:toggle-diff-fullscreen", action: "toggle-diff-fullscreen", label: "Toggle Diff Fullscreen", shortcut: "\u21E7\u2318F" },
   { kind: "action", id: "a:focus-terminal", action: "focus-terminal", label: "Focus Terminal", shortcut: "\u23181" },

@@ -43,6 +43,7 @@ function normalizeUtilityPanelTab(
     case "diff":
     case "files":
     case "peers":
+    case "shell":
       return value;
     default:
       return defaultUtilityPanelTab;

@@ -18,6 +18,10 @@ export function ClearPeerMessages() {
   return window['go']['main']['App']['ClearPeerMessages']();
 }
 
+export function CommitWorktree(arg1, arg2) {
+  return window['go']['main']['App']['CommitWorktree'](arg1, arg2);
+}
+
 export function ConfirmClearPeerMessages() {
   return window['go']['main']['App']['ConfirmClearPeerMessages']();
 }
@@ -34,6 +38,10 @@ export function CreateWorkspaceSession(arg1, arg2) {
   return window['go']['main']['App']['CreateWorkspaceSession'](arg1, arg2);
 }
 
+export function CreateWorktreeBranch(arg1, arg2) {
+  return window['go']['main']['App']['CreateWorktreeBranch'](arg1, arg2);
+}
+
 export function CreateWorktreeSession(arg1, arg2) {
   return window['go']['main']['App']['CreateWorktreeSession'](arg1, arg2);
 }
@@ -42,8 +50,20 @@ export function DeletePeerMessage(arg1) {
   return window['go']['main']['App']['DeletePeerMessage'](arg1);
 }
 
+export function EnsureWorktreeShellSession(arg1) {
+  return window['go']['main']['App']['EnsureWorktreeShellSession'](arg1);
+}
+
+export function GetCommitRangeDiff(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetCommitRangeDiff'](arg1, arg2, arg3);
+}
+
 export function GetFileDiff(arg1, arg2, arg3) {
   return window['go']['main']['App']['GetFileDiff'](arg1, arg2, arg3);
+}
+
+export function GetWorktreeCommitHistory(arg1, arg2) {
+  return window['go']['main']['App']['GetWorktreeCommitHistory'](arg1, arg2);
 }
 
 export function GetWorktreeDiff(arg1) {
@@ -60,6 +80,10 @@ export function ListWorktreeEntries(arg1, arg2) {
 
 export function ListWorktreeFiles(arg1) {
   return window['go']['main']['App']['ListWorktreeFiles'](arg1);
+}
+
+export function PushWorktree(arg1) {
+  return window['go']['main']['App']['PushWorktree'](arg1);
 }
 
 export function ReadWorktreeFile(arg1, arg2) {
@@ -88,6 +112,10 @@ export function SendSessionInput(arg1, arg2) {
 
 export function ShowWindow() {
   return window['go']['main']['App']['ShowWindow']();
+}
+
+export function StageWorktreeAll(arg1) {
+  return window['go']['main']['App']['StageWorktreeAll'](arg1);
 }
 
 export function UpdateSessionCWD(arg1, arg2) {

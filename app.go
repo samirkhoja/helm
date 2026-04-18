@@ -25,6 +25,7 @@ const (
 	menuActionToggleDiff           = "toggle-diff"
 	menuActionToggleFiles          = "toggle-files"
 	menuActionTogglePeers          = "toggle-peers"
+	menuActionToggleShell          = "toggle-shell"
 	menuActionToggleDiffFullscreen = "toggle-diff-fullscreen"
 	menuActionFocusTerminal        = "focus-terminal"
 	menuActionFocusFilesPanel      = "focus-files-panel"
@@ -272,6 +273,13 @@ func (a *App) CreateSession(worktreeID int, agentID string) (session.AppSnapshot
 	return a.manager.CreateSession(worktreeID, agentID)
 }
 
+func (a *App) EnsureWorktreeShellSession(worktreeID int) (session.AppSnapshot, error) {
+	if err := a.waitReady(); err != nil {
+		return session.AppSnapshot{}, err
+	}
+	return a.manager.EnsureWorktreeShellSession(worktreeID)
+}
+
 func (a *App) ActivateSession(sessionID int) (session.AppSnapshot, error) {
 	if err := a.waitReady(); err != nil {
 		return session.AppSnapshot{}, err
@@ -319,6 +327,48 @@ func (a *App) GetFileDiff(worktreeID int, path string, staged bool) (session.Fil
 		return session.FileDiff{}, err
 	}
 	return a.manager.FileDiff(worktreeID, path, staged)
+}
+
+func (a *App) CreateWorktreeBranch(worktreeID int, branchName string) (session.AppSnapshot, error) {
+	if err := a.waitReady(); err != nil {
+		return session.AppSnapshot{}, err
+	}
+	return a.manager.CreateWorktreeBranch(worktreeID, branchName)
+}
+
+func (a *App) StageWorktreeAll(worktreeID int) (session.GitActionResult, error) {
+	if err := a.waitReady(); err != nil {
+		return session.GitActionResult{}, err
+	}
+	return a.manager.StageWorktreeAll(worktreeID)
+}
+
+func (a *App) CommitWorktree(worktreeID int, message string) (session.GitActionResult, error) {
+	if err := a.waitReady(); err != nil {
+		return session.GitActionResult{}, err
+	}
+	return a.manager.CommitWorktree(worktreeID, message)
+}
+
+func (a *App) PushWorktree(worktreeID int) (session.GitActionResult, error) {
+	if err := a.waitReady(); err != nil {
+		return session.GitActionResult{}, err
+	}
+	return a.manager.PushWorktree(worktreeID)
+}
+
+func (a *App) GetWorktreeCommitHistory(worktreeID, limit int) ([]session.GitCommitSummary, error) {
+	if err := a.waitReady(); err != nil {
+		return nil, err
+	}
+	return a.manager.WorktreeCommitHistory(worktreeID, limit)
+}
+
+func (a *App) GetCommitRangeDiff(worktreeID int, baseRef, headRef string) (session.CommitDiff, error) {
+	if err := a.waitReady(); err != nil {
+		return session.CommitDiff{}, err
+	}
+	return a.manager.CompareCommits(worktreeID, baseRef, headRef)
 }
 
 func (a *App) ListWorktreeFiles(worktreeID int) ([]string, error) {

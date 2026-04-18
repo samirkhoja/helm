@@ -1,6 +1,12 @@
 import { ArrowLeft, ChevronRight, Save } from "lucide-react";
 
-import { AgentIcon, DiffPanelIcon, FilesPanelIcon, PeersIcon } from "../icons";
+import {
+  AgentIcon,
+  DiffPanelIcon,
+  FilesPanelIcon,
+  PeersIcon,
+  TerminalIcon,
+} from "../icons";
 
 type MainHeaderProps = {
   activeAgentId: string | null;
@@ -16,8 +22,10 @@ type MainHeaderProps = {
   onToggleDiff: () => void;
   onToggleFiles: () => void;
   onTogglePeers: () => void;
+  onToggleShell: () => void;
   onToggleSidebar: () => void;
   peersPanelActive: boolean;
+  shellPanelActive: boolean;
   sidebarOpen: boolean;
   subtitle: string;
   title: string;
@@ -38,8 +46,10 @@ export function MainHeader(props: MainHeaderProps) {
     onToggleDiff,
     onToggleFiles,
     onTogglePeers,
+    onToggleShell,
     onToggleSidebar,
     peersPanelActive,
+    shellPanelActive,
     sidebarOpen,
     subtitle,
     title,
@@ -121,18 +131,23 @@ export function MainHeader(props: MainHeaderProps) {
         ) : null}
 
         <button
-          aria-label={peersPanelActive ? "Hide peers panel" : "Show peers panel"}
-          className={`ghost-button main-header__utility-toggle main-header__utility-toggle--icon main-header__utility-toggle--badgeable${peersPanelActive ? " is-active" : ""}`}
-          title={peersPanelActive ? "Hide peers panel" : "Show peers panel"}
+          aria-label={shellPanelActive ? "Hide shell panel" : "Show shell panel"}
+          className={`ghost-button main-header__utility-toggle main-header__utility-toggle--icon${shellPanelActive ? " is-active" : ""}`}
+          title={shellPanelActive ? "Hide shell panel" : "Show shell panel"}
           type="button"
-          onClick={onTogglePeers}
+          onClick={onToggleShell}
         >
-          <PeersIcon className="utility-toggle__icon" size={14} />
-          {localOutstandingPeerCount > 0 ? (
-            <span className="utility-toggle__badge utility-toggle__badge--corner">
-              {localOutstandingPeerCount}
-            </span>
-          ) : null}
+          <TerminalIcon className="utility-toggle__icon" size={15} />
+        </button>
+
+        <button
+          aria-label={diffPanelActive ? "Hide git diff" : "Show git diff"}
+          className={`ghost-button main-header__utility-toggle main-header__utility-toggle--icon main-header__utility-toggle--git${diffPanelActive ? " is-active" : ""}`}
+          title={diffPanelActive ? "Hide git diff" : "Show git diff"}
+          type="button"
+          onClick={onToggleDiff}
+        >
+          <DiffPanelIcon className="utility-toggle__icon" size={15} />
         </button>
 
         <button
@@ -146,13 +161,18 @@ export function MainHeader(props: MainHeaderProps) {
         </button>
 
         <button
-          aria-label={diffPanelActive ? "Hide git diff" : "Show git diff"}
-          className={`ghost-button main-header__utility-toggle main-header__utility-toggle--icon${diffPanelActive ? " is-active" : ""}`}
-          title={diffPanelActive ? "Hide git diff" : "Show git diff"}
+          aria-label={peersPanelActive ? "Hide peers panel" : "Show peers panel"}
+          className={`ghost-button main-header__utility-toggle main-header__utility-toggle--icon main-header__utility-toggle--badgeable${peersPanelActive ? " is-active" : ""}`}
+          title={peersPanelActive ? "Hide peers panel" : "Show peers panel"}
           type="button"
-          onClick={onToggleDiff}
+          onClick={onTogglePeers}
         >
-          <DiffPanelIcon className="utility-toggle__icon" size={15} />
+          <PeersIcon className="utility-toggle__icon" size={14} />
+          {localOutstandingPeerCount > 0 ? (
+            <span className="utility-toggle__badge utility-toggle__badge--corner">
+              {localOutstandingPeerCount}
+            </span>
+          ) : null}
         </button>
       </div>
     </header>

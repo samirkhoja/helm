@@ -1,7 +1,10 @@
 import type {
   BootstrapResult,
   AppSnapshot,
+  CommitDiff,
   FileDiff,
+  GitActionResult,
+  GitCommitSummary,
   PeerStateDTO,
   UIStateDTO,
   WorktreeContentMatch,
@@ -19,6 +22,7 @@ type AppBinding = {
   ConfirmDiscardFileChanges(): Promise<boolean>;
   CreateWorkspaceSession(rootPath: string, agentId: string): Promise<AppSnapshot>;
   CreateSession(worktreeId: number, agentId: string): Promise<AppSnapshot>;
+  EnsureWorktreeShellSession(worktreeId: number): Promise<AppSnapshot>;
   CreateWorktreeSession(repoId: number, request: WorktreeCreateRequest): Promise<AppSnapshot>;
   ActivateSession(sessionId: number): Promise<AppSnapshot>;
   KillSession(sessionId: number): Promise<AppSnapshot>;
@@ -31,6 +35,12 @@ type AppBinding = {
   ClearPeerMessages(): Promise<PeerStateDTO>;
   GetWorktreeDiff(worktreeId: number): Promise<WorktreeDiff>;
   GetFileDiff(worktreeId: number, path: string, staged: boolean): Promise<FileDiff>;
+  CreateWorktreeBranch(worktreeId: number, branchName: string): Promise<AppSnapshot>;
+  StageWorktreeAll(worktreeId: number): Promise<GitActionResult>;
+  CommitWorktree(worktreeId: number, message: string): Promise<GitActionResult>;
+  PushWorktree(worktreeId: number): Promise<GitActionResult>;
+  GetWorktreeCommitHistory(worktreeId: number, limit: number): Promise<GitCommitSummary[]>;
+  GetCommitRangeDiff(worktreeId: number, baseRef: string, headRef: string): Promise<CommitDiff>;
   ListWorktreeFiles(worktreeId: number): Promise<string[]>;
   SearchWorktreeContents(worktreeId: number, query: string, limit: number): Promise<WorktreeContentMatch[]>;
   ListWorktreeEntries(worktreeId: number, relativeDir: string): Promise<WorktreeEntry[]>;
@@ -68,6 +78,10 @@ export function createWorkspaceSession(rootPath: string, agentId: string) {
 
 export function createSession(worktreeId: number, agentId: string) {
   return backend().CreateSession(worktreeId, agentId);
+}
+
+export function ensureWorktreeShellSession(worktreeId: number) {
+  return backend().EnsureWorktreeShellSession(worktreeId);
 }
 
 export function createWorktreeSession(repoId: number, request: WorktreeCreateRequest) {
@@ -116,6 +130,34 @@ export function getWorktreeDiff(worktreeId: number) {
 
 export function getFileDiff(worktreeId: number, path: string, staged: boolean) {
   return backend().GetFileDiff(worktreeId, path, staged);
+}
+
+export function createWorktreeBranch(worktreeId: number, branchName: string) {
+  return backend().CreateWorktreeBranch(worktreeId, branchName);
+}
+
+export function stageWorktreeAll(worktreeId: number) {
+  return backend().StageWorktreeAll(worktreeId);
+}
+
+export function commitWorktree(worktreeId: number, message: string) {
+  return backend().CommitWorktree(worktreeId, message);
+}
+
+export function pushWorktree(worktreeId: number) {
+  return backend().PushWorktree(worktreeId);
+}
+
+export function getWorktreeCommitHistory(worktreeId: number, limit: number) {
+  return backend().GetWorktreeCommitHistory(worktreeId, limit);
+}
+
+export function getCommitRangeDiff(
+  worktreeId: number,
+  baseRef: string,
+  headRef: string,
+) {
+  return backend().GetCommitRangeDiff(worktreeId, baseRef, headRef);
 }
 
 export function listWorktreeFiles(worktreeId: number) {

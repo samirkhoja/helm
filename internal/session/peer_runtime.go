@@ -17,7 +17,7 @@ import (
 const (
 	peerHeartbeatInterval  = 5 * time.Second
 	peerPollInterval       = 1 * time.Second
-	peerExpiryWindow       = 30 * time.Second
+	peerExpiryWindow       = persist.PeerLiveWindow
 	peerRecentMessageLimit = 50
 )
 
@@ -335,8 +335,9 @@ func (r *peerRuntime) buildSnapshot() PeerStateDTO {
 	}
 
 	registrations, err := r.store.ListPeerRegistrations(persist.PeerListFilter{
-		Scope:       persist.PeerScopeMachine,
-		IncludeSelf: true,
+		Scope:         persist.PeerScopeMachine,
+		IncludeSelf:   true,
+		OnlyLivePeers: true,
 	})
 	if err != nil {
 		return PeerStateDTO{}

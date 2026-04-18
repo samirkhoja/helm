@@ -1,7 +1,24 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 
-import { getFileDiff, getWorktreeDiff } from "../backend";
-import type { FileDiff, WorktreeDiff } from "../types";
+import {
+  commitWorktree,
+  createWorktreeBranch,
+  getCommitRangeDiff,
+  getFileDiff,
+  getWorktreeCommitHistory,
+  getWorktreeDiff,
+  pushWorktree,
+  stageWorktreeAll,
+} from "../backend";
+import type {
+  AppSnapshot,
+  CommitDiff,
+  FileDiff,
+  GitCommitSummary,
+  WorktreeDiff,
+} from "../types";
+
+export type DiffMode = "changes" | "history";
 
 export type DiffTarget = {
   path: string;
@@ -13,6 +30,12 @@ export type FileDiffState = {
   loading: boolean;
   error: string | null;
   data: FileDiff | null;
+};
+
+export type CommitDiffState = {
+  loading: boolean;
+  error: string | null;
+  data: CommitDiff | null;
 };
 
 export type DiffSectionItemViewModel = {
@@ -32,13 +55,43 @@ export type DiffSectionViewModel = {
   title: string;
 };
 
+export type DiffActionStatus = {
+  kind: "error" | "success";
+  message: string;
+};
+
+export type DiffHistoryViewModel = {
+  commits: GitCommitSummary[];
+  loading: boolean;
+  error: string | null;
+  baseRef: string | null;
+  headRef: string | null;
+  compareState: CommitDiffState;
+};
+
 export type DiffBodyState =
   | { kind: "no-worktree" }
   | { kind: "error"; message: string }
   | { kind: "loading" }
   | { kind: "not-git" }
   | { kind: "empty" }
-  | { kind: "ready"; sections: DiffSectionViewModel[] };
+  | {
+      kind: "ready";
+      worktreeId: number;
+      mode: DiffMode;
+      gitBranch: string;
+      actionStatus: DiffActionStatus | null;
+      busyAction: "branch" | "commit" | "push" | "stage" | null;
+      canCommit: boolean;
+      canCreateBranch: boolean;
+      canPush: boolean;
+      canStageAll: boolean;
+      history: DiffHistoryViewModel;
+      sections: DiffSectionViewModel[];
+      stagedCount: number;
+      unstagedCount: number;
+      untrackedCount: number;
+    };
 
 type DiffState = {
   data: WorktreeDiff | null;
@@ -46,14 +99,20 @@ type DiffState = {
   loading: boolean;
 };
 
+type HistoryState = DiffHistoryViewModel;
+
 type UseDiffPanelOptions = {
   activeWorktreeId: number | null;
   enabled: boolean;
+  onSnapshot: (snapshot: AppSnapshot) => void;
 };
 
 const minDiffTextZoom = 80;
 const maxDiffTextZoom = 170;
 const diffTextZoomStep = 10;
+const commitHistoryLimit = 10;
+const detachedHeadLabel = "Detached HEAD";
+const noGitBranchLabel = "No git branch";
 
 function formatDiffDelta(value: number, prefix: "+" | "-") {
   return `${prefix}${value}`;
@@ -114,29 +173,187 @@ function diffTargetKey(worktreeId: number, target: DiffTarget) {
   return `${worktreeId}:${target.kind}:${target.staged ? "staged" : "unstaged"}:${target.path}`;
 }
 
+function resolveHistorySelection(
+  commits: GitCommitSummary[],
+  currentBaseRef: string | null,
+  currentHeadRef: string | null,
+) {
+  const available = new Set(commits.map((item) => item.hash));
+
+  const headRef =
+    currentHeadRef && available.has(currentHeadRef)
+      ? currentHeadRef
+      : (commits[0]?.hash ?? null);
+
+  let baseRef =
+    currentBaseRef && available.has(currentBaseRef) ? currentBaseRef : null;
+
+  if (!baseRef && commits.length > 1) {
+    const fallback = commits.find((item) => item.hash !== headRef);
+    baseRef = fallback?.hash ?? null;
+  }
+
+  return {
+    baseRef,
+    headRef,
+  };
+}
+
 const emptyFileDiffState: FileDiffState = {
   data: null,
   error: null,
   loading: false,
 };
 
+const emptyCommitDiffState: CommitDiffState = {
+  data: null,
+  error: null,
+  loading: false,
+};
+
+const emptyHistoryState: HistoryState = {
+  baseRef: null,
+  commits: [],
+  compareState: emptyCommitDiffState,
+  error: null,
+  headRef: null,
+  loading: false,
+};
+
 export function useDiffPanel(options: UseDiffPanelOptions) {
-  const { activeWorktreeId, enabled } = options;
+  const { activeWorktreeId, enabled, onSnapshot } = options;
 
   const [diffState, setDiffState] = useState<DiffState>({
     data: null,
     error: null,
     loading: false,
   });
+  const [historyState, setHistoryState] = useState<HistoryState>(emptyHistoryState);
+  const [mode, setMode] = useState<DiffMode>("changes");
   const [openDiffTargets, setOpenDiffTargets] = useState<DiffTarget[]>([]);
   const [fileDiffStates, setFileDiffStates] = useState<
     Record<string, FileDiffState>
   >({});
   const [diffTextZoom, setDiffTextZoom] = useState(100);
+  const [actionStatus, setActionStatus] = useState<DiffActionStatus | null>(null);
+  const [busyAction, setBusyAction] = useState<
+    "branch" | "commit" | "push" | "stage" | null
+  >(null);
 
   const fileDiffCacheRef = useRef(new Map<string, FileDiff>());
   const diffSummarySignatureRef = useRef("");
   const currentWorktreeIdRef = useRef<number | null>(null);
+  const diffRequestIdRef = useRef(0);
+  const historyRequestIdRef = useRef(0);
+  const compareRequestIdRef = useRef(0);
+
+  const loadWorktreeDiff = async (worktreeId: number, showLoading = true) => {
+    const requestId = ++diffRequestIdRef.current;
+    if (showLoading) {
+      setDiffState((current) => ({
+        ...current,
+        error: null,
+        loading: true,
+      }));
+    }
+
+    try {
+      const data = await getWorktreeDiff(worktreeId);
+      if (
+        requestId !== diffRequestIdRef.current ||
+        currentWorktreeIdRef.current !== worktreeId
+      ) {
+        return false;
+      }
+
+      const nextSignature = buildDiffSummarySignature(data);
+      const didChange = diffSummarySignatureRef.current !== nextSignature;
+      diffSummarySignatureRef.current = nextSignature;
+      if (didChange) {
+        fileDiffCacheRef.current.clear();
+      }
+
+      setDiffState({
+        data,
+        error: null,
+        loading: false,
+      });
+      return true;
+    } catch (error) {
+      if (
+        requestId !== diffRequestIdRef.current ||
+        currentWorktreeIdRef.current !== worktreeId
+      ) {
+        return false;
+      }
+
+      setDiffState((current) => ({
+        data: current.data,
+        error: String(error),
+        loading: false,
+      }));
+      return false;
+    }
+  };
+
+  const loadCommitHistory = async (
+    worktreeId: number,
+    preserveSelection = true,
+  ) => {
+    const requestId = ++historyRequestIdRef.current;
+    setHistoryState((current) => ({
+      ...current,
+      error: null,
+      loading: true,
+    }));
+
+    try {
+      const commits = await getWorktreeCommitHistory(worktreeId, commitHistoryLimit);
+      if (
+        requestId !== historyRequestIdRef.current ||
+        currentWorktreeIdRef.current !== worktreeId
+      ) {
+        return false;
+      }
+
+      setHistoryState((current) => {
+        const selection = resolveHistorySelection(
+          commits,
+          preserveSelection ? current.baseRef : null,
+          preserveSelection ? current.headRef : null,
+        );
+        const sameSelection =
+          selection.baseRef === current.baseRef &&
+          selection.headRef === current.headRef;
+        return {
+          baseRef: selection.baseRef,
+          commits,
+          compareState:
+            selection.baseRef && selection.headRef && sameSelection
+              ? current.compareState
+              : emptyCommitDiffState,
+          error: null,
+          headRef: selection.headRef,
+          loading: false,
+        };
+      });
+      return true;
+    } catch (error) {
+      if (
+        requestId !== historyRequestIdRef.current ||
+        currentWorktreeIdRef.current !== worktreeId
+      ) {
+        return false;
+      }
+
+      setHistoryState((current) => ({
+        ...current,
+        error: String(error),
+        loading: false,
+      }));
+      return false;
+    }
+  };
 
   useEffect(() => {
     if (!enabled) {
@@ -152,79 +369,60 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
         error: null,
         loading: false,
       });
+      setHistoryState(emptyHistoryState);
       setOpenDiffTargets([]);
       setFileDiffStates({});
+      setActionStatus(null);
+      setBusyAction(null);
       return;
     }
 
-    let cancelled = false;
     const worktreeChanged = currentWorktreeIdRef.current !== activeWorktreeId;
     currentWorktreeIdRef.current = activeWorktreeId;
 
     if (worktreeChanged) {
       diffSummarySignatureRef.current = "";
       fileDiffCacheRef.current.clear();
-      setDiffState({
-        data: null,
-        error: null,
-        loading: true,
-      });
       setOpenDiffTargets([]);
       setFileDiffStates({});
-    } else {
-      setDiffState((current) => ({
-        ...current,
-        error: null,
-        loading: current.data === null,
-      }));
+      setActionStatus(null);
+      setBusyAction(null);
+      setHistoryState(emptyHistoryState);
     }
 
-    const refreshDiff = async () => {
-      try {
-        const data = await getWorktreeDiff(activeWorktreeId);
-        if (cancelled) {
-          return;
-        }
+    void loadWorktreeDiff(activeWorktreeId, true);
 
-        const nextSignature = buildDiffSummarySignature(data);
-        const didChange = diffSummarySignatureRef.current !== nextSignature;
-        diffSummarySignatureRef.current = nextSignature;
-
-        if (didChange) {
-          fileDiffCacheRef.current.clear();
-        }
-
-        setDiffState({
-          data,
-          error: null,
-          loading: false,
-        });
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-
-        setDiffState((current) => ({
-          data: current.data,
-          error: String(error),
-          loading: false,
-        }));
-      }
-    };
-
-    void refreshDiff();
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") {
         return;
       }
-      void refreshDiff();
+      void loadWorktreeDiff(activeWorktreeId, false);
+      if (mode === "history") {
+        void loadCommitHistory(activeWorktreeId, true);
+      }
     }, 8000);
 
     return () => {
-      cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeWorktreeId, enabled]);
+  }, [activeWorktreeId, enabled, mode]);
+
+  useEffect(() => {
+    if (!enabled || !activeWorktreeId || !diffState.data?.isGitRepo || mode !== "history") {
+      return;
+    }
+    if (historyState.loading || historyState.commits.length > 0) {
+      return;
+    }
+    void loadCommitHistory(activeWorktreeId, true);
+  }, [
+    activeWorktreeId,
+    diffState.data?.isGitRepo,
+    enabled,
+    historyState.commits.length,
+    historyState.loading,
+    mode,
+  ]);
 
   useEffect(() => {
     if (!enabled || !diffState.data || diffState.data.worktreeId !== activeWorktreeId) {
@@ -243,7 +441,7 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
         targets.some((target) => isSameDiffTarget(target, openTarget)),
       ),
     );
-  }, [diffState.data, enabled]);
+  }, [activeWorktreeId, diffState.data, enabled]);
 
   useEffect(() => {
     if (
@@ -344,32 +542,220 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
     };
   }, [activeWorktreeId, diffState.data, enabled, openDiffTargets]);
 
+  useEffect(() => {
+    if (
+      !enabled ||
+      mode !== "history" ||
+      !activeWorktreeId ||
+      !diffState.data?.isGitRepo
+    ) {
+      return;
+    }
+
+    const { baseRef, headRef } = historyState;
+    if (!baseRef || !headRef) {
+      setHistoryState((current) => ({
+        ...current,
+        compareState: emptyCommitDiffState,
+      }));
+      return;
+    }
+
+    let cancelled = false;
+    const requestId = ++compareRequestIdRef.current;
+
+    setHistoryState((current) => ({
+      ...current,
+      compareState: {
+        data: null,
+        error: null,
+        loading: true,
+      },
+    }));
+
+    void (async () => {
+      try {
+        const data = await getCommitRangeDiff(activeWorktreeId, baseRef, headRef);
+        if (
+          cancelled ||
+          requestId !== compareRequestIdRef.current ||
+          currentWorktreeIdRef.current !== activeWorktreeId
+        ) {
+          return;
+        }
+
+        setHistoryState((current) => {
+          if (current.baseRef !== baseRef || current.headRef !== headRef) {
+            return current;
+          }
+          return {
+            ...current,
+            compareState: {
+              data,
+              error: null,
+              loading: false,
+            },
+          };
+        });
+      } catch (error) {
+        if (
+          cancelled ||
+          requestId !== compareRequestIdRef.current ||
+          currentWorktreeIdRef.current !== activeWorktreeId
+        ) {
+          return;
+        }
+
+        setHistoryState((current) => {
+          if (current.baseRef !== baseRef || current.headRef !== headRef) {
+            return current;
+          }
+          return {
+            ...current,
+            compareState: {
+              data: current.compareState.data,
+              error: String(error),
+              loading: false,
+            },
+          };
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeWorktreeId,
+    diffState.data?.isGitRepo,
+    enabled,
+    historyState.baseRef,
+    historyState.headRef,
+    mode,
+  ]);
+
   const refreshDiffPanel = async () => {
     if (!activeWorktreeId) {
       return;
     }
 
     fileDiffCacheRef.current.clear();
-    setDiffState((current) => ({
-      ...current,
-      error: null,
-      loading: true,
-    }));
+    await loadWorktreeDiff(activeWorktreeId, true);
+    if (mode === "history") {
+      await loadCommitHistory(activeWorktreeId, true);
+    }
+  };
 
+  const withAction = async <T,>(
+    action: "branch" | "commit" | "push" | "stage",
+    run: () => Promise<T>,
+  ) => {
+    setBusyAction(action);
+    setActionStatus(null);
     try {
-      const data = await getWorktreeDiff(activeWorktreeId);
-      diffSummarySignatureRef.current = buildDiffSummarySignature(data);
-      setDiffState({
-        data,
-        error: null,
-        loading: false,
-      });
+      const result = await run();
+      return result;
     } catch (error) {
-      setDiffState((current) => ({
-        data: current.data,
-        error: String(error),
-        loading: false,
-      }));
+      setActionStatus({
+        kind: "error",
+        message: String(error),
+      });
+      return null;
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const createBranch = async (branchName: string) => {
+    if (!activeWorktreeId) {
+      return false;
+    }
+
+    const snapshot = await withAction("branch", async () => {
+      return await createWorktreeBranch(activeWorktreeId, branchName);
+    });
+    if (!snapshot) {
+      return false;
+    }
+
+    onSnapshot(snapshot);
+    setActionStatus({
+      kind: "success",
+      message: `Switched to ${branchName.trim()}.`,
+    });
+    await loadWorktreeDiff(activeWorktreeId, true);
+    if (mode === "history") {
+      await loadCommitHistory(activeWorktreeId, false);
+    }
+    return true;
+  };
+
+  const stageAll = async () => {
+    if (!activeWorktreeId) {
+      return;
+    }
+
+    const result = await withAction("stage", async () => {
+      return await stageWorktreeAll(activeWorktreeId);
+    });
+    if (!result) {
+      return;
+    }
+
+    setActionStatus({
+      kind: "success",
+      message: result.message,
+    });
+    await loadWorktreeDiff(activeWorktreeId, true);
+  };
+
+  const commitChanges = async (message: string) => {
+    if (!activeWorktreeId) {
+      return false;
+    }
+
+    const result = await withAction("commit", async () => {
+      return await commitWorktree(activeWorktreeId, message);
+    });
+    if (!result) {
+      return false;
+    }
+
+    setActionStatus({
+      kind: "success",
+      message: result.message,
+    });
+    await loadWorktreeDiff(activeWorktreeId, true);
+    await loadCommitHistory(activeWorktreeId, false);
+    return true;
+  };
+
+  const pushChanges = async () => {
+    if (!activeWorktreeId) {
+      return;
+    }
+
+    const result = await withAction("push", async () => {
+      return await pushWorktree(activeWorktreeId);
+    });
+    if (!result) {
+      return;
+    }
+
+    setActionStatus({
+      kind: "success",
+      message: result.message,
+    });
+  };
+
+  const changeMode = (nextMode: DiffMode) => {
+    setMode(nextMode);
+    if (
+      nextMode === "history" &&
+      activeWorktreeId &&
+      diffState.data?.isGitRepo
+    ) {
+      void loadCommitHistory(activeWorktreeId, true);
     }
   };
 
@@ -399,29 +785,6 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
 
     return [
       {
-        emptyText: "No unstaged changes.",
-        items: diffState.data.unstaged.map((item) => {
-          const target: DiffTarget = {
-            kind: "unstaged",
-            path: item.path,
-            staged: false,
-          };
-          return {
-            addedLabel: formatDiffDelta(item.added, "+"),
-            fileDiffState: diffStateForTarget(target),
-            isOpen: openDiffTargets.some((openTarget) =>
-              isSameDiffTarget(openTarget, target),
-            ),
-            key: `unstaged-${item.path}`,
-            path: item.path,
-            removedLabel: formatDiffDelta(item.removed, "-"),
-            target,
-          };
-        }),
-        key: "unstaged",
-        title: "Unstaged",
-      },
-      {
         emptyText: "No staged changes.",
         items: diffState.data.staged.map((item) => {
           const target: DiffTarget = {
@@ -443,6 +806,29 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
         }),
         key: "staged",
         title: "Staged",
+      },
+      {
+        emptyText: "No unstaged changes.",
+        items: diffState.data.unstaged.map((item) => {
+          const target: DiffTarget = {
+            kind: "unstaged",
+            path: item.path,
+            staged: false,
+          };
+          return {
+            addedLabel: formatDiffDelta(item.added, "+"),
+            fileDiffState: diffStateForTarget(target),
+            isOpen: openDiffTargets.some((openTarget) =>
+              isSameDiffTarget(openTarget, target),
+            ),
+            key: `unstaged-${item.path}`,
+            path: item.path,
+            removedLabel: formatDiffDelta(item.removed, "-"),
+            target,
+          };
+        }),
+        key: "unstaged",
+        title: "Unstaged",
       },
       {
         emptyText: "No untracked files.",
@@ -490,13 +876,43 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
       return { kind: "not-git" };
     }
     if (diffState.data) {
+      const gitBranch = diffState.data.gitBranch || noGitBranchLabel;
+      const canPush =
+        gitBranch !== "" &&
+        gitBranch !== noGitBranchLabel &&
+        gitBranch !== detachedHeadLabel;
+
       return {
         kind: "ready",
+        worktreeId: diffState.data.worktreeId,
+        mode,
+        gitBranch,
+        actionStatus,
+        busyAction,
+        canCommit: diffState.data.staged.length > 0,
+        canCreateBranch: true,
+        canPush,
+        canStageAll:
+          diffState.data.unstaged.length > 0 || diffState.data.untracked.length > 0,
+        history: historyState,
         sections,
+        stagedCount: diffState.data.staged.length,
+        unstagedCount: diffState.data.unstaged.length,
+        untrackedCount: diffState.data.untracked.length,
       };
     }
     return { kind: "empty" };
-  }, [activeWorktreeId, diffState.data, diffState.error, diffState.loading, sections]);
+  }, [
+    activeWorktreeId,
+    actionStatus,
+    busyAction,
+    diffState.data,
+    diffState.error,
+    diffState.loading,
+    historyState,
+    mode,
+    sections,
+  ]);
 
   const adjustDiffTextZoom = (delta: number) => {
     setDiffTextZoom((current) =>
@@ -512,10 +928,27 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
     bodyState,
     canZoomIn: diffTextZoom < maxDiffTextZoom,
     canZoomOut: diffTextZoom > minDiffTextZoom,
+    commitChanges,
+    createBranch,
     diffPanelStyle,
     diffTextZoom,
+    pushChanges,
     refreshDiffPanel,
     resetDiffTextZoom: () => setDiffTextZoom(100),
+    selectHistoryBase: (hash: string) =>
+      setHistoryState((current) => ({
+        ...current,
+        baseRef: current.baseRef === hash ? null : hash,
+        compareState: emptyCommitDiffState,
+      })),
+    selectHistoryHead: (hash: string) =>
+      setHistoryState((current) => ({
+        ...current,
+        headRef: current.headRef === hash ? null : hash,
+        compareState: emptyCommitDiffState,
+      })),
+    setMode: changeMode,
+    stageAll,
     toggleDiffTarget,
     zoomIn: () => adjustDiffTextZoom(diffTextZoomStep),
     zoomOut: () => adjustDiffTextZoom(-diffTextZoomStep),

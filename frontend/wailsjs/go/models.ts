@@ -17,6 +17,7 @@ export namespace session {
 	export class SessionDTO {
 	    id: number;
 	    worktreeId: number;
+	    role: string;
 	    adapterId: string;
 	    label: string;
 	    title: string;
@@ -35,6 +36,7 @@ export namespace session {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.worktreeId = source["worktreeId"];
+	        this.role = source["role"];
 	        this.adapterId = source["adapterId"];
 	        this.label = source["label"];
 	        this.title = source["title"];
@@ -336,6 +338,26 @@ export namespace session {
 		    return a;
 		}
 	}
+	export class CommitDiff {
+	    worktreeId: number;
+	    baseRef: string;
+	    headRef: string;
+	    patch: string;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CommitDiff(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.worktreeId = source["worktreeId"];
+	        this.baseRef = source["baseRef"];
+	        this.headRef = source["headRef"];
+	        this.patch = source["patch"];
+	        this.message = source["message"];
+	    }
+	}
 	export class FileDiff {
 	    worktreeId: number;
 	    path: string;
@@ -354,6 +376,38 @@ export namespace session {
 	        this.staged = source["staged"];
 	        this.patch = source["patch"];
 	        this.message = source["message"];
+	    }
+	}
+	export class GitActionResult {
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GitActionResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.message = source["message"];
+	    }
+	}
+	export class GitCommitSummary {
+	    hash: string;
+	    shortHash: string;
+	    subject: string;
+	    authorName: string;
+	    authorDate: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new GitCommitSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hash = source["hash"];
+	        this.shortHash = source["shortHash"];
+	        this.subject = source["subject"];
+	        this.authorName = source["authorName"];
+	        this.authorDate = source["authorDate"];
 	    }
 	}
 	export class GitFileChange {

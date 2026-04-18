@@ -2,7 +2,7 @@
 
 Helm is a desktop app for terminal-first agentic engineering. It keeps agent sessions, workspace navigation, quick file edits, diffs, and peer coordination in one native desktop shell so you can stay in flow without bouncing between a terminal, editor, git client, and chat tools.
 
-Helm is currently pre-1.0 and tracked at version `0.1.0`.
+Helm is currently pre-1.0 and tracked at version `0.1.1`.
 
 ## Highlights
 

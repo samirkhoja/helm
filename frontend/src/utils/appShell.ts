@@ -6,7 +6,7 @@ import type {
   WorkspaceChoice,
 } from "../types";
 
-export type UtilityPanelTab = "diff" | "files" | "peers";
+export type UtilityPanelTab = "diff" | "files" | "peers" | "shell";
 
 export type MenuAction =
   | "new-workspace"
@@ -17,6 +17,7 @@ export type MenuAction =
   | "toggle-sidebar"
   | "toggle-diff"
   | "toggle-files"
+  | "toggle-shell"
   | "toggle-peers"
   | "toggle-diff-fullscreen"
   | "focus-terminal"
@@ -58,9 +59,36 @@ function normalizedWorktreeSessions(worktree: WorktreeDTO) {
   );
 }
 
+export function isUtilityShellSession(session: SessionDTO) {
+  return session.role === "utility-shell";
+}
+
+function visibleWorktreeSessions(worktree: WorktreeDTO) {
+  return normalizedWorktreeSessions(worktree).filter(
+    (session) => !isUtilityShellSession(session),
+  );
+}
+
+export function worktreeUtilityShellSession(worktree: WorktreeDTO | null) {
+  if (!worktree) {
+    return null;
+  }
+  return (
+    normalizedWorktreeSessions(worktree).find((session) =>
+      isUtilityShellSession(session),
+    ) ?? null
+  );
+}
+
 export function flattenSessions(repos: RepoDTO[]) {
   return repos.flatMap((repo) =>
     repo.worktrees.flatMap((worktree) => normalizedWorktreeSessions(worktree)),
+  );
+}
+
+export function flattenVisibleSessions(repos: RepoDTO[]) {
+  return repos.flatMap((repo) =>
+    repo.worktrees.flatMap((worktree) => visibleWorktreeSessions(worktree)),
   );
 }
 
@@ -107,7 +135,7 @@ export function defaultAgentId(snapshot: AppSnapshot | null) {
     return "";
   }
 
-  if (snapshot.lastUsedAgentId) {
+  if (snapshot?.lastUsedAgentId) {
     const match = snapshot.availableAgents.find(
       (agent) => agent.id === snapshot.lastUsedAgentId,
     );
@@ -156,7 +184,7 @@ export function trimPathLabel(value: string, segmentLimit = 3) {
 
 export function repoVisibleSessions(repo: RepoDTO): VisibleSession[] {
   return repo.worktrees.flatMap((worktree) =>
-    normalizedWorktreeSessions(worktree).map((session) => ({
+    visibleWorktreeSessions(worktree).map((session) => ({
       worktree,
       session,
     })),

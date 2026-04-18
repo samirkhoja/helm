@@ -723,6 +723,77 @@ func TestSQLiteStoreExpireStalePeersRemovesRegistrationAndFailsMessages(t *testi
 	}
 }
 
+func TestSQLiteStoreListPeerRegistrationsOnlyLivePeers(t *testing.T) {
+	t.Parallel()
+
+	store := newTestStore(t)
+	t.Cleanup(func() {
+		_ = store.Close()
+	})
+
+	now := time.Now()
+	for _, record := range []PeerRegistrationRecord{
+		{
+			PeerID:            "live-peer",
+			TokenHash:         "token-live",
+			RuntimeInstanceID: "runtime-live",
+			SessionID:         1,
+			WorktreeRootPath:  "/tmp/repo-live",
+			RepoKey:           "repo-live",
+			AdapterID:         "codex",
+			AdapterFamily:     "codex",
+			Label:             "Live Peer",
+			Title:             "Live Peer",
+			CreatedAt:         now.Add(-time.Minute),
+			LastHeartbeatAt:   now,
+		},
+		{
+			PeerID:            "stale-peer",
+			TokenHash:         "token-stale",
+			RuntimeInstanceID: "runtime-stale",
+			SessionID:         2,
+			WorktreeRootPath:  "/tmp/repo-stale",
+			RepoKey:           "repo-stale",
+			AdapterID:         "codex",
+			AdapterFamily:     "codex",
+			Label:             "Stale Peer",
+			Title:             "Stale Peer",
+			CreatedAt:         now.Add(-2 * time.Minute),
+			LastHeartbeatAt:   now.Add(-PeerLiveWindow - time.Second),
+		},
+	} {
+		if err := store.UpsertPeerRegistration(record); err != nil {
+			t.Fatalf("UpsertPeerRegistration(%s) error = %v", record.PeerID, err)
+		}
+	}
+
+	all, err := store.ListPeerRegistrations(PeerListFilter{
+		Scope:       PeerScopeMachine,
+		IncludeSelf: true,
+	})
+	if err != nil {
+		t.Fatalf("ListPeerRegistrations(all) error = %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListPeerRegistrations(all) len = %d, want 2", len(all))
+	}
+
+	liveOnly, err := store.ListPeerRegistrations(PeerListFilter{
+		Scope:         PeerScopeMachine,
+		IncludeSelf:   true,
+		OnlyLivePeers: true,
+	})
+	if err != nil {
+		t.Fatalf("ListPeerRegistrations(live) error = %v", err)
+	}
+	if len(liveOnly) != 1 {
+		t.Fatalf("ListPeerRegistrations(live) len = %d, want 1", len(liveOnly))
+	}
+	if liveOnly[0].PeerID != "live-peer" {
+		t.Fatalf("ListPeerRegistrations(live)[0] = %q, want live-peer", liveOnly[0].PeerID)
+	}
+}
+
 func TestSQLiteStoreDeleteAndClearPeerMessages(t *testing.T) {
 	t.Parallel()
 

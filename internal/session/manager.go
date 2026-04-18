@@ -36,6 +36,7 @@ type sessionState struct {
 	StorageID    int64
 	storageReady chan struct{} // closed when async DB write completes; nil for restored sessions
 	WorktreeID   int
+	Role         string
 	AdapterID    string
 	Label        string
 	Title        string
@@ -52,6 +53,7 @@ type managedSessionStartRequest struct {
 	Repo                   *repoState
 	SelectedWorktree       *worktreeState
 	SessionID              int
+	Role                   string
 	AdapterID              string
 	Label                  string
 	Title                  string
@@ -59,6 +61,13 @@ type managedSessionStartRequest struct {
 	StorageID              int64
 	PersistLastUsedAgentID string
 	Activate               bool
+	Persist                bool
+}
+
+type utilityShellEnsureState struct {
+	done   chan struct{}
+	result AppSnapshot
+	err    error
 }
 
 type Manager struct {
@@ -90,6 +99,7 @@ type Manager struct {
 	availableAgents   []AgentDTO
 	availableAgentIDs map[string]struct{}
 	nextCreatedAt     time.Time
+	utilityShells     map[int]*utilityShellEnsureState
 
 	shellCacheMu sync.RWMutex
 	shellCache   map[shellAdapterCacheKey]cachedShellAdapterDefinitions
@@ -119,6 +129,7 @@ func NewManager(registry *agent.Registry, inheritedEnv []string, starter Starter
 		uiState:           toUIStateDTO(persist.DefaultUIState()),
 		availableAgents:   availableAgents,
 		availableAgentIDs: availableAgentIDs,
+		utilityShells:     make(map[int]*utilityShellEnsureState),
 		shellCache:        make(map[shellAdapterCacheKey]cachedShellAdapterDefinitions),
 	}
 }
@@ -315,9 +326,17 @@ func (m *Manager) UpdateSessionCWD(sessionID int, cwdPath string) error {
 	normalizedCWD, _ := normalizeSessionStartPath(worktree.RootPath, cwdPath)
 	session.CWDPath = normalizedCWD
 	storageID := session.StorageID
+	worktreeID := session.WorktreeID
 	m.mu.Unlock()
 
-	return m.store.UpdateSessionCWD(storageID, normalizedCWD, time.Now())
+	if storageID != 0 {
+		if err := m.store.UpdateSessionCWD(storageID, normalizedCWD, time.Now()); err != nil {
+			return err
+		}
+	}
+
+	_, _, _ = m.worktreeRootPathAndBranch(worktreeID)
+	return nil
 }
 
 func (m *Manager) UpdateSessionMode(sessionID int, adapterID string) (AppSnapshot, error) {
@@ -478,6 +497,7 @@ func (m *Manager) startManagedSession(request managedSessionStartRequest) (*sess
 		ID:         request.SessionID,
 		StorageID:  request.StorageID,
 		WorktreeID: request.SelectedWorktree.ID,
+		Role:       normalizeSessionRole(request.Role),
 		AdapterID:  request.AdapterID,
 		Label:      request.Label,
 		Title:      request.Title,
@@ -507,6 +527,11 @@ func (m *Manager) startManagedSession(request managedSessionStartRequest) (*sess
 			}
 		}
 
+		snapshot := m.insertSessionLocked(session, request)
+		return session, snapshot, nil
+	}
+
+	if !request.Persist {
 		snapshot := m.insertSessionLocked(session, request)
 		return session, snapshot, nil
 	}
@@ -566,6 +591,13 @@ type deferredStorageWork struct {
 	peerFamily       string
 	repoKey          string
 	createdAt        time.Time
+}
+
+type detachedSessionHandle struct {
+	sessionID  int
+	worktreeID int
+	handle     Handle
+	supportDir string
 }
 
 func newDeferredStorageWork(request managedSessionStartRequest, createdAt time.Time) deferredStorageWork {
@@ -674,12 +706,14 @@ func (m *Manager) CreateWorkspaceSession(rootPath, agentID string) (AppSnapshot,
 		Repo:                   repo,
 		SelectedWorktree:       selectedWorktree,
 		SessionID:              sessionID,
+		Role:                   SessionRolePrimary,
 		AdapterID:              requestedAgentID,
 		Label:                  plan.RequestedSpec.Label,
 		Title:                  title,
 		StartPath:              startPath,
 		PersistLastUsedAgentID: persistedLastUsedAgentID(requestedAgentID),
 		Activate:               true,
+		Persist:                true,
 	})
 	if err != nil {
 		return AppSnapshot{}, err
@@ -720,16 +754,148 @@ func (m *Manager) CreateSession(worktreeID int, agentID string) (AppSnapshot, er
 		Repo:                   repo,
 		SelectedWorktree:       selectedWorktree,
 		SessionID:              sessionID,
+		Role:                   SessionRolePrimary,
 		AdapterID:              requestedAgentID,
 		Label:                  plan.RequestedSpec.Label,
 		Title:                  title,
 		StartPath:              startPath,
 		PersistLastUsedAgentID: persistedLastUsedAgentID(requestedAgentID),
 		Activate:               true,
+		Persist:                true,
 	})
 	if err != nil {
 		return AppSnapshot{}, err
 	}
+	return snapshot, nil
+}
+
+func (m *Manager) EnsureWorktreeShellSession(worktreeID int) (AppSnapshot, error) {
+	m.mu.Lock()
+	if existing := m.findUtilityShellSessionForWorktreeLocked(worktreeID); existing != nil && !existing.Closing {
+		snapshot := m.snapshotLocked()
+		m.mu.Unlock()
+		return snapshot, nil
+	}
+	if pending := m.utilityShells[worktreeID]; pending != nil {
+		done := pending.done
+		m.mu.Unlock()
+		<-done
+		return pending.result, pending.err
+	}
+	selection, err := m.repoSelectionFromMemoryLocked(worktreeID)
+	if err != nil {
+		snapshot := m.snapshotLocked()
+		m.mu.Unlock()
+		return snapshot, err
+	}
+	if !m.worktreeHasSessionsLocked(worktreeID) {
+		err := fmt.Errorf("worktree %d is no longer available", worktreeID)
+		snapshot := m.snapshotLocked()
+		m.mu.Unlock()
+		return snapshot, err
+	}
+	pending := &utilityShellEnsureState{done: make(chan struct{})}
+	m.utilityShells[worktreeID] = pending
+	m.mu.Unlock()
+
+	startPath, err := normalizeSessionStartPath(selection.SelectedWorktree.RootPath, selection.SelectedWorktree.RootPath)
+	if err != nil {
+		m.mu.Lock()
+		snapshot := m.snapshotLocked()
+		m.completeUtilityShellEnsureLocked(worktreeID, pending, snapshot, err)
+		m.mu.Unlock()
+		return snapshot, err
+	}
+
+	plan, err := m.prepareShellBackedLaunch(selection.SelectedWorktree.RootPath, startPath, "shell", false)
+	if err != nil {
+		m.mu.Lock()
+		snapshot := m.snapshotLocked()
+		m.completeUtilityShellEnsureLocked(worktreeID, pending, snapshot, err)
+		m.mu.Unlock()
+		return snapshot, err
+	}
+
+	m.mu.Lock()
+	if current := m.utilityShells[worktreeID]; current != pending {
+		result, resultErr := pending.result, pending.err
+		m.mu.Unlock()
+		cleanupSessionSupportDir(plan.SupportDir)
+		return result, resultErr
+	}
+	if existing := m.findUtilityShellSessionForWorktreeLocked(worktreeID); existing != nil && !existing.Closing {
+		snapshot := m.snapshotLocked()
+		m.completeUtilityShellEnsureLocked(worktreeID, pending, snapshot, nil)
+		m.mu.Unlock()
+		cleanupSessionSupportDir(plan.SupportDir)
+		return snapshot, nil
+	}
+	worktree := m.findWorktreeByIDLocked(worktreeID)
+	if worktree == nil || !m.worktreeHasSessionsLocked(worktreeID) {
+		err := fmt.Errorf("worktree %d is no longer available", worktreeID)
+		snapshot := m.snapshotLocked()
+		m.completeUtilityShellEnsureLocked(worktreeID, pending, snapshot, err)
+		m.mu.Unlock()
+		cleanupSessionSupportDir(plan.SupportDir)
+		return snapshot, err
+	}
+	m.sessionSeq++
+	sessionID := m.sessionSeq
+	m.mu.Unlock()
+
+	handle, err := m.startShellBackedHandle(plan, sessionID, worktreeID)
+	if err != nil {
+		m.mu.Lock()
+		snapshot := m.snapshotLocked()
+		m.completeUtilityShellEnsureLocked(worktreeID, pending, snapshot, err)
+		m.mu.Unlock()
+		return snapshot, err
+	}
+
+	session := &sessionState{
+		ID:         sessionID,
+		WorktreeID: worktreeID,
+		Role:       SessionRoleUtilityShell,
+		AdapterID:  "shell",
+		Label:      plan.RequestedSpec.Label,
+		Title:      "Shell",
+		Status:     "running",
+		CWDPath:    startPath,
+		Handle:     handle,
+		SupportDir: plan.SupportDir,
+	}
+
+	m.mu.Lock()
+	if current := m.utilityShells[worktreeID]; current != pending {
+		result, resultErr := pending.result, pending.err
+		m.mu.Unlock()
+		_ = handle.Close()
+		cleanupSessionSupportDir(plan.SupportDir)
+		return result, resultErr
+	}
+	if existing := m.findUtilityShellSessionForWorktreeLocked(worktreeID); existing != nil && !existing.Closing {
+		snapshot := m.snapshotLocked()
+		m.completeUtilityShellEnsureLocked(worktreeID, pending, snapshot, nil)
+		m.mu.Unlock()
+		_ = handle.Close()
+		cleanupSessionSupportDir(plan.SupportDir)
+		return snapshot, nil
+	}
+	worktree = m.findWorktreeByIDLocked(worktreeID)
+	if worktree == nil || !m.worktreeHasSessionsLocked(worktreeID) {
+		err := fmt.Errorf("worktree %d is no longer available", worktreeID)
+		snapshot := m.snapshotLocked()
+		m.completeUtilityShellEnsureLocked(worktreeID, pending, snapshot, err)
+		m.mu.Unlock()
+		_ = handle.Close()
+		cleanupSessionSupportDir(plan.SupportDir)
+		return snapshot, err
+	}
+	m.sessions = append(m.sessions, session)
+	snapshot := m.snapshotLocked()
+	m.completeUtilityShellEnsureLocked(worktreeID, pending, snapshot, nil)
+	m.mu.Unlock()
+
 	return snapshot, nil
 }
 
@@ -835,12 +1001,14 @@ func (m *Manager) CreateWorktreeSession(repoID int, request WorktreeCreateReques
 		Repo:                   repo,
 		SelectedWorktree:       selectedWorktree,
 		SessionID:              sessionID,
+		Role:                   SessionRolePrimary,
 		AdapterID:              requestedAgentID,
 		Label:                  plan.RequestedSpec.Label,
 		Title:                  title,
 		StartPath:              startPath,
 		PersistLastUsedAgentID: persistedLastUsedAgentID(requestedAgentID),
 		Activate:               true,
+		Persist:                true,
 	})
 	if err != nil {
 		return AppSnapshot{}, err
@@ -860,6 +1028,10 @@ func (m *Manager) ActivateSession(sessionID int) (AppSnapshot, error) {
 	if session == nil {
 		m.mu.RUnlock()
 		return AppSnapshot{}, fmt.Errorf("session %d not found", sessionID)
+	}
+	if isUtilityShellSessionRole(session.Role) {
+		m.mu.RUnlock()
+		return AppSnapshot{}, fmt.Errorf("session %d is not a primary session", sessionID)
 	}
 
 	worktree := m.findWorktreeByIDLocked(session.WorktreeID)
@@ -917,7 +1089,10 @@ func (m *Manager) KillSession(sessionID int) (AppSnapshot, error) {
 	if worktree != nil {
 		repoID = worktree.RepoID
 	}
-	nextActiveStorageID := m.projectActiveSessionStorageIDAfterRemovalLocked(worktreeID, repoID, sessionID)
+	nextActiveStorageID := int64(0)
+	if storageID != 0 {
+		nextActiveStorageID = m.projectActiveSessionStorageIDAfterRemovalLocked(worktreeID, repoID, sessionID)
+	}
 	handle := session.Handle
 	m.mu.Unlock()
 
@@ -930,13 +1105,15 @@ func (m *Manager) KillSession(sessionID int) (AppSnapshot, error) {
 		return AppSnapshot{}, err
 	}
 
-	if err := m.store.DeleteSession(storageID, nextActiveStorageID); err != nil {
-		m.mu.Lock()
-		if current := m.findSessionByIDLocked(sessionID); current != nil {
-			current.Closing = false
+	if storageID != 0 {
+		if err := m.store.DeleteSession(storageID, nextActiveStorageID); err != nil {
+			m.mu.Lock()
+			if current := m.findSessionByIDLocked(sessionID); current != nil {
+				current.Closing = false
+			}
+			m.mu.Unlock()
+			return AppSnapshot{}, err
 		}
-		m.mu.Unlock()
-		return AppSnapshot{}, err
 	}
 	if m.peerRuntime != nil {
 		m.peerRuntime.unregisterSession(sessionID, "peer session was closed")
@@ -951,11 +1128,13 @@ func (m *Manager) KillSession(sessionID int) (AppSnapshot, error) {
 	}
 
 	m.removeSessionLocked(sessionID)
+	detached := m.detachUtilityShellsForWorktreeWithoutPrimaryLocked(worktreeID)
 	m.removeRepoIfEmptyLocked(repoID)
 	m.rebalanceActiveLocked(worktreeID, repoID, sessionID)
 
 	snapshot := m.snapshotLocked()
 	m.mu.Unlock()
+	closeDetachedSessionHandles(detached)
 
 	m.sink.Emit(EventSessionLifecycle, SessionLifecycleEvent{
 		SessionID:  sessionID,
@@ -1072,12 +1251,14 @@ func (m *Manager) handleExit(info ExitInfo) {
 	}
 
 	m.removeSessionLocked(info.SessionID)
+	detached := m.detachUtilityShellsForWorktreeWithoutPrimaryLocked(info.WorktreeID)
 	m.removeRepoIfEmptyLocked(repoID)
 	m.rebalanceActiveLocked(info.WorktreeID, repoID, info.SessionID)
 	nextActiveStorageID := m.activeSessionStorageIDLocked()
 
 	snapshot := m.snapshotLocked()
 	m.mu.Unlock()
+	closeDetachedSessionHandles(detached)
 
 	status := "exited"
 	errText := ""
@@ -1085,11 +1266,13 @@ func (m *Manager) handleExit(info ExitInfo) {
 		status = "error"
 		errText = info.Err.Error()
 	}
-	if err := m.store.DeleteSession(storageID, nextActiveStorageID); err != nil {
-		if errText != "" {
-			errText += "; "
+	if storageID != 0 {
+		if err := m.store.DeleteSession(storageID, nextActiveStorageID); err != nil {
+			if errText != "" {
+				errText += "; "
+			}
+			errText += err.Error()
 		}
-		errText += err.Error()
 	}
 	if m.peerRuntime != nil {
 		m.peerRuntime.unregisterSession(info.SessionID, "peer session exited")
@@ -1121,11 +1304,14 @@ func (m *Manager) snapshotLocked() AppSnapshot {
 		if worktree == nil {
 			continue
 		}
-		repoHasSession[worktree.RepoID] = true
+		if isPrimarySessionState(session) {
+			repoHasSession[worktree.RepoID] = true
+		}
 		decoration := peerDecorations[session.ID]
 		sessionsByWorktree[worktree.ID] = append(sessionsByWorktree[worktree.ID], SessionDTO{
 			ID:                   session.ID,
 			WorktreeID:           session.WorktreeID,
+			Role:                 normalizeSessionRole(session.Role),
 			AdapterID:            session.AdapterID,
 			Label:                session.Label,
 			Title:                session.Title,
@@ -1239,6 +1425,7 @@ func (m *Manager) sessionDTOsForWorktreeLocked(worktreeID int, peerDecorations m
 		items = append(items, SessionDTO{
 			ID:                   session.ID,
 			WorktreeID:           session.WorktreeID,
+			Role:                 normalizeSessionRole(session.Role),
 			AdapterID:            session.AdapterID,
 			Label:                session.Label,
 			Title:                session.Title,
@@ -1259,6 +1446,51 @@ func (m *Manager) activeSessionStorageIDLocked() int64 {
 		return 0
 	}
 	return activeSession.StorageID
+}
+
+func normalizeSessionRole(value string) string {
+	switch value {
+	case SessionRoleUtilityShell:
+		return value
+	default:
+		return SessionRolePrimary
+	}
+}
+
+func isPrimarySessionRole(role string) bool {
+	return normalizeSessionRole(role) == SessionRolePrimary
+}
+
+func isUtilityShellSessionRole(role string) bool {
+	return normalizeSessionRole(role) == SessionRoleUtilityShell
+}
+
+func isPrimarySessionState(session *sessionState) bool {
+	return session != nil && isPrimarySessionRole(session.Role)
+}
+
+func (m *Manager) completeUtilityShellEnsureLocked(worktreeID int, state *utilityShellEnsureState, result AppSnapshot, err error) {
+	if state == nil {
+		return
+	}
+	if current := m.utilityShells[worktreeID]; current != state {
+		return
+	}
+	state.result = result
+	state.err = err
+	delete(m.utilityShells, worktreeID)
+	close(state.done)
+}
+
+func (m *Manager) cancelUtilityShellEnsureLocked(worktreeID int, err error) {
+	state := m.utilityShells[worktreeID]
+	if state == nil {
+		return
+	}
+	state.result = m.snapshotLocked()
+	state.err = err
+	delete(m.utilityShells, worktreeID)
+	close(state.done)
 }
 
 func (m *Manager) projectActiveSessionStorageIDAfterRemovalLocked(worktreeID, repoID, sessionID int) int64 {
@@ -1419,6 +1651,45 @@ func (m *Manager) rebalanceActiveLocked(worktreeID, repoID, sessionID int) {
 	m.activeSessionID = 0
 }
 
+func (m *Manager) detachUtilityShellsForWorktreeWithoutPrimaryLocked(worktreeID int) []detachedSessionHandle {
+	if worktreeID == 0 || m.worktreeHasSessionsLocked(worktreeID) {
+		return nil
+	}
+	m.cancelUtilityShellEnsureLocked(
+		worktreeID,
+		fmt.Errorf("worktree %d is no longer available", worktreeID),
+	)
+
+	sessions := append([]*sessionState(nil), m.sessions...)
+	detached := make([]detachedSessionHandle, 0)
+	for _, session := range sessions {
+		if session.WorktreeID != worktreeID || !isUtilityShellSessionRole(session.Role) {
+			continue
+		}
+		session.Closing = true
+		detachedSession := m.detachSessionLocked(session.ID)
+		if detachedSession == nil {
+			continue
+		}
+		detached = append(detached, detachedSessionHandle{
+			sessionID:  detachedSession.ID,
+			worktreeID: detachedSession.WorktreeID,
+			handle:     detachedSession.Handle,
+			supportDir: detachedSession.SupportDir,
+		})
+	}
+	return detached
+}
+
+func closeDetachedSessionHandles(detached []detachedSessionHandle) {
+	for _, item := range detached {
+		if item.handle != nil {
+			_ = item.handle.Close()
+		}
+		cleanupSessionSupportDir(item.supportDir)
+	}
+}
+
 func (m *Manager) removeSessionLocked(sessionID int) {
 	for index, session := range m.sessions {
 		if session.ID != sessionID {
@@ -1428,6 +1699,17 @@ func (m *Manager) removeSessionLocked(sessionID int) {
 		m.sessions = append(m.sessions[:index], m.sessions[index+1:]...)
 		return
 	}
+}
+
+func (m *Manager) detachSessionLocked(sessionID int) *sessionState {
+	for index, session := range m.sessions {
+		if session.ID != sessionID {
+			continue
+		}
+		m.sessions = append(m.sessions[:index], m.sessions[index+1:]...)
+		return session
+	}
+	return nil
 }
 
 func (m *Manager) removeRepoIfEmptyLocked(repoID int) {
@@ -1463,7 +1745,7 @@ func (m *Manager) removeRepoIfEmptyLocked(repoID int) {
 
 func (m *Manager) worktreeHasSessionsLocked(worktreeID int) bool {
 	for _, session := range m.sessions {
-		if session.WorktreeID == worktreeID {
+		if session.WorktreeID == worktreeID && isPrimarySessionState(session) {
 			return true
 		}
 	}
@@ -1521,6 +1803,18 @@ func (m *Manager) findSessionByIDLocked(sessionID int) *sessionState {
 	return nil
 }
 
+func (m *Manager) findUtilityShellSessionForWorktreeLocked(worktreeID int) *sessionState {
+	for _, session := range m.sessions {
+		if session.WorktreeID != worktreeID {
+			continue
+		}
+		if isUtilityShellSessionRole(session.Role) {
+			return session
+		}
+	}
+	return nil
+}
+
 func (m *Manager) worktreesForRepoLocked(repoID int) []*worktreeState {
 	items := make([]*worktreeState, 0)
 	for _, worktree := range m.worktrees {
@@ -1539,7 +1833,7 @@ func (m *Manager) worktreesForRepoLocked(repoID int) []*worktreeState {
 
 func (m *Manager) lastSessionForWorktreeLocked(worktreeID int) *sessionState {
 	for i := len(m.sessions) - 1; i >= 0; i-- {
-		if m.sessions[i].WorktreeID == worktreeID {
+		if m.sessions[i].WorktreeID == worktreeID && isPrimarySessionState(m.sessions[i]) {
 			return m.sessions[i]
 		}
 	}
@@ -1551,7 +1845,7 @@ func (m *Manager) lastSessionForWorktreeExceptLocked(worktreeID int, skipSession
 		if m.sessions[i].ID == skipSessionID {
 			continue
 		}
-		if m.sessions[i].WorktreeID == worktreeID {
+		if m.sessions[i].WorktreeID == worktreeID && isPrimarySessionState(m.sessions[i]) {
 			return m.sessions[i]
 		}
 	}
@@ -1560,6 +1854,9 @@ func (m *Manager) lastSessionForWorktreeExceptLocked(worktreeID int, skipSession
 
 func (m *Manager) lastSessionForRepoLocked(repoID int) *sessionState {
 	for i := len(m.sessions) - 1; i >= 0; i-- {
+		if !isPrimarySessionState(m.sessions[i]) {
+			continue
+		}
 		worktree := m.findWorktreeByIDLocked(m.sessions[i].WorktreeID)
 		if worktree != nil && worktree.RepoID == repoID {
 			return m.sessions[i]
@@ -1573,6 +1870,9 @@ func (m *Manager) lastSessionForRepoExceptLocked(repoID int, skipSessionID int) 
 		if m.sessions[i].ID == skipSessionID {
 			continue
 		}
+		if !isPrimarySessionState(m.sessions[i]) {
+			continue
+		}
 		worktree := m.findWorktreeByIDLocked(m.sessions[i].WorktreeID)
 		if worktree != nil && worktree.RepoID == repoID {
 			return m.sessions[i]
@@ -1582,15 +1882,17 @@ func (m *Manager) lastSessionForRepoExceptLocked(repoID int, skipSessionID int) 
 }
 
 func (m *Manager) lastSessionLocked() *sessionState {
-	if len(m.sessions) == 0 {
-		return nil
+	for i := len(m.sessions) - 1; i >= 0; i-- {
+		if isPrimarySessionState(m.sessions[i]) {
+			return m.sessions[i]
+		}
 	}
-	return m.sessions[len(m.sessions)-1]
+	return nil
 }
 
 func (m *Manager) lastSessionExceptLocked(skipSessionID int) *sessionState {
 	for i := len(m.sessions) - 1; i >= 0; i-- {
-		if m.sessions[i].ID != skipSessionID {
+		if m.sessions[i].ID != skipSessionID && isPrimarySessionState(m.sessions[i]) {
 			return m.sessions[i]
 		}
 	}
@@ -1655,7 +1957,7 @@ func normalizeTerminalFontSize(value int) int {
 
 func normalizeUtilityPanelTab(value string) string {
 	switch value {
-	case "diff", "files", "peers":
+	case "diff", "files", "peers", "shell":
 		return value
 	default:
 		return "diff"
@@ -1752,11 +2054,13 @@ func (m *Manager) restoreSession(record persist.SessionRecord) (*sessionState, e
 		Repo:             repo,
 		SelectedWorktree: selectedWorktree,
 		SessionID:        sessionID,
+		Role:             SessionRolePrimary,
 		AdapterID:        requestedAgentID,
 		Label:            label,
 		Title:            title,
 		StartPath:        startPath,
 		StorageID:        record.ID,
+		Persist:          true,
 	})
 	if err != nil {
 		return nil, err

@@ -452,6 +452,10 @@ func (s *SQLiteStore) ListPeerRegistrations(filter PeerListFilter) ([]PeerRegist
 		conditions = append(conditions, "peer_id <> ?")
 		args = append(args, filter.SelfPeerID)
 	}
+	if filter.OnlyLivePeers {
+		conditions = append(conditions, "last_heartbeat_at >= ?")
+		args = append(args, time.Now().Add(-PeerLiveWindow).UnixMilli())
+	}
 
 	query := `
 		SELECT peer_id, token_hash, runtime_instance_id, session_id, worktree_root_path, repo_key,

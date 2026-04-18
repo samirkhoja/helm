@@ -150,7 +150,11 @@ export function CommandPalette(props: CommandPaletteProps) {
                 key={item.id}
                 className={`command-palette__item${index === palette.selectedIndex ? " is-selected" : ""}`}
                 type="button"
-                onPointerEnter={() => palette.setSelectedIndex(index)}
+                onPointerMove={() => {
+                  if (index !== palette.selectedIndex) {
+                    palette.setSelectedIndex(index);
+                  }
+                }}
                 onPointerDown={(event) => {
                   event.preventDefault();
                   handleSelect(item);

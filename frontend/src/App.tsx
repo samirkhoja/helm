@@ -18,6 +18,7 @@ import {
   createSession,
   createWorkspaceSession,
   createWorktreeSession,
+  ensureWorktreeShellSession,
   killSession,
   resizeSession,
   sendSessionInput,
@@ -64,10 +65,12 @@ import {
   describeSessionLabel,
   describeWorktreeMeta,
   flattenSessions,
+  flattenVisibleSessions,
   nextWorktreeDefaults,
   repoVisibleSessions,
   sessionCycleTarget,
   suggestWorktreePath,
+  worktreeUtilityShellSession,
   type MenuAction,
   type SessionLauncherState,
   type WorkspacePickerState,
@@ -110,6 +113,24 @@ const LazyFileEditor = lazy(async () => {
   const module = await import("./components/app-shell/FileEditor");
   return { default: module.FileEditor };
 });
+
+function findUtilityShellSessionInSnapshot(
+  snapshot: AppSnapshot,
+  worktreeId: number,
+) {
+  for (const repo of snapshot.repos) {
+    for (const worktree of repo.worktrees) {
+      if (worktree.id !== worktreeId) {
+        continue;
+      }
+      return (
+        worktree.sessions.find((session) => session.role === "utility-shell") ??
+        null
+      );
+    }
+  }
+  return null;
+}
 
 function reducer(state: UIState, action: Action): UIState {
   switch (action.type) {
@@ -199,8 +220,15 @@ function App() {
     messages: [],
   });
   const terminalRef = useRef<TerminalStageHandle>(null);
+  const shellTerminalRef = useRef<TerminalStageHandle>(null);
   const filesPanelRef = useRef<FilesPanelHandle>(null);
   const fallbackActivationRef = useRef(0);
+  const shellRequestRef = useRef(0);
+  const activeShellSessionRef = useRef<number | null>(null);
+  const desiredShellWorktreeIdRef = useRef<number | null>(null);
+  const pendingShellOutputRef = useRef(new Map<number, string[]>());
+  const [shellRailLoading, setShellRailLoading] = useState(false);
+  const [shellRailError, setShellRailError] = useState<string | null>(null);
 
   const setNotice = (notice: string | null) => {
     dispatch({ type: "setNotice", notice });
@@ -217,6 +245,7 @@ function App() {
     [repos],
   );
   const sessions = useMemo(() => flattenSessions(repos), [repos]);
+  const visibleSessions = useMemo(() => flattenVisibleSessions(repos), [repos]);
   const repoById = useMemo(
     () => new Map(repos.map((repo) => [repo.id, repo])),
     [repos],
@@ -230,7 +259,7 @@ function App() {
     sessions,
     handleError,
   );
-  const sessionActivity = useSessionActivity(sessions);
+  const sessionActivity = useSessionActivity(visibleSessions);
   const paneLayout = usePaneLayout({
     collapsedRepoKeys: state.collapsedRepoKeys,
     onError: handleError,
@@ -238,10 +267,10 @@ function App() {
   });
 
   const activeSession =
-    sessions.find((session) => session.id === snapshot?.activeSessionId) ??
+    visibleSessions.find((session) => session.id === snapshot?.activeSessionId) ??
     null;
   const resolvedActiveSession =
-    activeSession ?? sessions[sessions.length - 1] ?? null;
+    activeSession ?? visibleSessions[visibleSessions.length - 1] ?? null;
   const activeWorktree =
     (resolvedActiveSession
       ? worktreeById.get(resolvedActiveSession.worktreeId)
@@ -253,6 +282,31 @@ function App() {
     repos.find((repo) => repo.id === snapshot?.activeRepoId) ??
     null;
   const activeSessionId = resolvedActiveSession?.id ?? 0;
+  const activeUtilityShellSession = worktreeUtilityShellSession(activeWorktree);
+  const shellPanelActive =
+    paneLayout.diffPanelOpen && paneLayout.utilityPanelTab === "shell";
+  const visibleSessionIds = useMemo(
+    () => new Set(visibleSessions.map((session) => session.id)),
+    [visibleSessions],
+  );
+  desiredShellWorktreeIdRef.current = shellPanelActive
+    ? (activeWorktree?.id ?? null)
+    : null;
+
+  const bufferShellOutput = (sessionId: number, data: string) => {
+    const current = pendingShellOutputRef.current.get(sessionId) ?? [];
+    current.push(data);
+    pendingShellOutputRef.current.set(sessionId, current);
+  };
+
+  const flushBufferedShellOutput = (sessionId: number) => {
+    const buffered = pendingShellOutputRef.current.get(sessionId);
+    if (!buffered?.length || !shellTerminalRef.current) {
+      return;
+    }
+    pendingShellOutputRef.current.delete(sessionId);
+    shellTerminalRef.current.writeOutput(sessionId, buffered.join(""));
+  };
 
   const activeSessionLabel = resolvedActiveSession
     ? describeSessionLabel(
@@ -293,6 +347,9 @@ function App() {
     activeWorktreeId: activeWorktree?.id ?? null,
     enabled:
       paneLayout.diffPanelOpen && paneLayout.utilityPanelTab === "diff",
+    onSnapshot: (nextSnapshot) => {
+      dispatch({ type: "setSnapshot", snapshot: nextSnapshot });
+    },
   });
   const confirmDiscardChanges = useCallback(async () => {
     return await confirmDiscardFileChanges();
@@ -359,8 +416,22 @@ function App() {
     !state.sessionLauncher;
 
   useWailsEvent<[SessionOutputEvent]>("session:output", (payload) => {
-    terminalRef.current?.writeOutput(payload.sessionId, payload.data);
-    sessionActivity.handleSessionOutput(payload);
+    if (visibleSessionIds.has(payload.sessionId)) {
+      terminalRef.current?.writeOutput(payload.sessionId, payload.data);
+      sessionActivity.handleSessionOutput(payload);
+      return;
+    }
+    if (payload.sessionId === activeUtilityShellSession?.id) {
+      if (shellTerminalRef.current) {
+        shellTerminalRef.current.writeOutput(payload.sessionId, payload.data);
+      } else {
+        bufferShellOutput(payload.sessionId, payload.data);
+      }
+      return;
+    }
+    if (shellPanelActive && shellRailLoading) {
+      bufferShellOutput(payload.sessionId, payload.data);
+    }
   });
 
   useWailsEvent<[SessionLifecycleEvent]>("session:lifecycle", (payload) => {
@@ -428,6 +499,125 @@ function App() {
         handleError(error);
       });
   }, [activeSession, resolvedActiveSession, snapshot, uiHydrated]);
+
+  useEffect(() => {
+    if (shellPanelActive && activeUtilityShellSession) {
+      const staleShellSessionId = activeShellSessionRef.current;
+      activeShellSessionRef.current = activeUtilityShellSession.id;
+      setShellRailLoading(false);
+      setShellRailError(null);
+      if (
+        staleShellSessionId &&
+        staleShellSessionId !== activeUtilityShellSession.id
+      ) {
+        void killSession(staleShellSessionId)
+          .then((nextSnapshot) => {
+            dispatch({ type: "setSnapshot", snapshot: nextSnapshot });
+          })
+          .catch((error) => {
+            handleError(error);
+          });
+      }
+      return;
+    }
+
+    const staleShellSessionId = activeShellSessionRef.current;
+    activeShellSessionRef.current = null;
+    setShellRailLoading(false);
+    setShellRailError(null);
+    if (!staleShellSessionId) {
+      return;
+    }
+
+    void killSession(staleShellSessionId)
+      .then((nextSnapshot) => {
+        dispatch({ type: "setSnapshot", snapshot: nextSnapshot });
+      })
+      .catch((error) => {
+        handleError(error);
+      });
+  }, [activeUtilityShellSession, shellPanelActive]);
+
+  useEffect(() => {
+    if (!shellPanelActive) {
+      pendingShellOutputRef.current.clear();
+      return;
+    }
+    if (!activeUtilityShellSession) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      flushBufferedShellOutput(activeUtilityShellSession.id);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [activeUtilityShellSession, shellPanelActive]);
+
+  useEffect(() => {
+    if (!shellPanelActive) {
+      shellRequestRef.current += 1;
+      setShellRailLoading(false);
+      setShellRailError(null);
+      return;
+    }
+    if (!activeWorktree) {
+      shellRequestRef.current += 1;
+      setShellRailLoading(false);
+      setShellRailError(null);
+      return;
+    }
+    if (activeUtilityShellSession) {
+      setShellRailLoading(false);
+      setShellRailError(null);
+      return;
+    }
+
+    const requestId = shellRequestRef.current + 1;
+    shellRequestRef.current = requestId;
+    pendingShellOutputRef.current.clear();
+    setShellRailLoading(true);
+    setShellRailError(null);
+
+    void ensureWorktreeShellSession(activeWorktree.id)
+      .then((nextSnapshot) => {
+        const ensuredShellSession = findUtilityShellSessionInSnapshot(
+          nextSnapshot,
+          activeWorktree.id,
+        );
+        const requestStillActive = shellRequestRef.current === requestId;
+
+        if (!requestStillActive) {
+          if (
+            ensuredShellSession &&
+            desiredShellWorktreeIdRef.current !== activeWorktree.id
+          ) {
+            void killSession(ensuredShellSession.id).catch((error) => {
+              handleError(error);
+            });
+          }
+          return;
+        }
+
+        dispatch({ type: "setSnapshot", snapshot: nextSnapshot });
+        setShellRailLoading(false);
+        setShellRailError(null);
+      })
+      .catch((error) => {
+        if (shellRequestRef.current !== requestId) {
+          return;
+        }
+        setShellRailLoading(false);
+        setShellRailError(String(error));
+      });
+  }, [
+    activeUtilityShellSession,
+    activeWorktree,
+    paneLayout.diffPanelOpen,
+    paneLayout.utilityPanelTab,
+    shellPanelActive,
+  ]);
 
   const openWorkspaceFlow = async () => {
     try {
@@ -599,7 +789,7 @@ function App() {
   };
 
   const cycleSessions = async (direction: 1 | -1) => {
-    const target = sessionCycleTarget(snapshot, sessions, direction);
+    const target = sessionCycleTarget(snapshot, visibleSessions, direction);
     if (target) {
       await activateSessionFlow(target.id);
     }
@@ -676,6 +866,9 @@ function App() {
         return;
       case "toggle-files":
         await fileEditorShell.toggleUtilityPanel("files");
+        return;
+      case "toggle-shell":
+        await fileEditorShell.toggleUtilityPanel("shell");
         return;
       case "toggle-peers":
         await fileEditorShell.toggleUtilityPanel("peers");
@@ -817,6 +1010,7 @@ function App() {
             peersPanelActive={
               paneLayout.diffPanelOpen && paneLayout.utilityPanelTab === "peers"
             }
+            shellPanelActive={shellPanelActive}
             sidebarOpen={paneLayout.sidebarOpen}
             subtitle={fileEditorShell.headerSubtitle}
             title={fileEditorShell.headerTitle}
@@ -825,6 +1019,9 @@ function App() {
             }}
             onToggleFiles={() => {
               void fileEditorShell.toggleUtilityPanel("files");
+            }}
+            onToggleShell={() => {
+              void fileEditorShell.toggleUtilityPanel("shell");
             }}
             onTogglePeers={() => {
               void fileEditorShell.toggleUtilityPanel("peers");
@@ -839,7 +1036,7 @@ function App() {
                 activeSessionId={activeSessionId}
                 autoFocusActive={terminalAutoFocusActive}
                 fontSize={paneLayout.terminalFontSize}
-                sessions={sessions}
+                sessions={visibleSessions}
                 onInput={(sessionId, data) => {
                   if (data.includes("\r") || data.includes("\n")) {
                     sessionActivity.armSessionActivity(sessionId);
@@ -926,6 +1123,38 @@ function App() {
           recentMessageCount={peerPanel.recentMessageCount}
           recentMessages={peerPanel.recentMessages}
           repoName={activeRepo?.name ?? null}
+          shellBody={
+            activeWorktree ? (
+              activeUtilityShellSession ? (
+                <div className="utility-shell-panel">
+                  <TerminalStage
+                    ref={shellTerminalRef}
+                    activeSessionId={activeUtilityShellSession.id}
+                    autoFocusActive={shellPanelActive && terminalAutoFocusActive}
+                    fontSize={paneLayout.terminalFontSize}
+                    sessions={[activeUtilityShellSession]}
+                    onInput={(sessionId, data) => {
+                      void sendSessionInput(sessionId, data);
+                    }}
+                    onResize={(sessionId, cols, rows) => {
+                      void resizeSession(sessionId, cols, rows);
+                    }}
+                    onSessionCwdChange={handleSessionCwdChange}
+                  />
+                </div>
+              ) : shellRailLoading ? (
+                <div className="diff-panel__empty">Starting shell…</div>
+              ) : shellRailError ? (
+                <div className="diff-panel__empty is-error">{shellRailError}</div>
+              ) : (
+                <div className="diff-panel__empty">Shell unavailable.</div>
+              )
+            ) : (
+              <div className="diff-panel__empty">
+                Select a session to open a shell.
+              </div>
+            )
+          }
           tab={paneLayout.utilityPanelTab}
           utilityLabel={activeWorktree ? activeWorktreeMeta.label : null}
           zoomInEnabled={diffPanel.canZoomIn}
@@ -933,16 +1162,31 @@ function App() {
           onClearPeerMessages={() => {
             void peerPanel.handleClearPeerMessages();
           }}
+          onCommitDiffChanges={(message) => {
+            return diffPanel.commitChanges(message);
+          }}
           onClose={() => {
             void fileEditorShell.closeUtilityPanel();
           }}
+          onCreateDiffBranch={(branchName) => {
+            return diffPanel.createBranch(branchName);
+          }}
           onDeletePeerMessage={(messageId) => {
             void peerPanel.handleDeletePeerMessage(messageId);
+          }}
+          onChangeDiffMode={diffPanel.setMode}
+          onPushDiffChanges={() => {
+            void diffPanel.pushChanges();
           }}
           onRefreshDiff={() => {
             void diffPanel.refreshDiffPanel();
           }}
           onResetDiffTextZoom={diffPanel.resetDiffTextZoom}
+          onSelectHistoryDiffBase={diffPanel.selectHistoryBase}
+          onSelectHistoryDiffHead={diffPanel.selectHistoryHead}
+          onStageDiffChanges={() => {
+            void diffPanel.stageAll();
+          }}
           onToggleDiffTarget={diffPanel.toggleDiffTarget}
           onToggleFullscreen={() =>
             paneLayout.setDiffPanelFullscreen((current) => !current)

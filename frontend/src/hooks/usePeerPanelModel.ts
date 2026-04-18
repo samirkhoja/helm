@@ -119,6 +119,10 @@ export function usePeerPanelModel(options: UsePeerPanelModelOptions) {
     });
   }, [peerState.peers, sessionLabelByPeerId]);
 
+  const sortedLocalPeers = useMemo(() => {
+    return sortedPeers.filter((peer) => peer.isSelf);
+  }, [sortedPeers]);
+
   const recentPeerMessages = useMemo(() => {
     return [...peerState.messages].sort(
       (left, right) => right.createdAtUnixMs - left.createdAtUnixMs,
@@ -135,7 +139,7 @@ export function usePeerPanelModel(options: UsePeerPanelModelOptions) {
   }, [peerState.peers]);
 
   const livePeers = useMemo<LivePeerViewModel[]>(() => {
-    return sortedPeers.map((peer) => ({
+    return sortedLocalPeers.map((peer) => ({
       adapterLabel: peer.adapterFamily || peer.adapterId,
       displayName: peerDisplayName(peer, sessionLabelByPeerId),
       heartbeatLabel: formatPanelTimestamp(peer.lastHeartbeatUnixMs),
@@ -146,7 +150,7 @@ export function usePeerPanelModel(options: UsePeerPanelModelOptions) {
       summary: peer.summary || "No summary published yet.",
       unreadCount: peer.unreadCount,
     }));
-  }, [sessionLabelByPeerId, sortedPeers]);
+  }, [sessionLabelByPeerId, sortedLocalPeers]);
 
   const recentMessages = useMemo<PeerMessageViewModel[]>(() => {
     return recentPeerMessages.map((message: PeerMessageDTO) => {

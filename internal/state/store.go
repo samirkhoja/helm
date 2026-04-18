@@ -13,6 +13,7 @@ const (
 	defaultTerminalFontSize = 12
 	minTerminalFontSize     = 11
 	maxTerminalFontSize     = 24
+	PeerLiveWindow          = 30 * time.Second
 
 	PeerScopeWorktree = "worktree"
 	PeerScopeRepo     = "repo"
@@ -151,7 +152,7 @@ func DefaultUIState() UIState {
 
 func normalizeUtilityPanelTab(value string) string {
 	switch value {
-	case "diff", "files", "peers":
+	case "diff", "files", "peers", "shell":
 		return value
 	default:
 		return defaultUtilityPanelTab

@@ -6,6 +6,7 @@ export interface AgentDTO {
 export interface SessionDTO {
   id: number;
   worktreeId: number;
+  role: "primary" | "utility-shell";
   adapterId: string;
   label: string;
   title: string;
@@ -52,7 +53,7 @@ export interface UIStateDTO {
   diffPanelOpen: boolean;
   diffPanelWidth: number;
   terminalFontSize: number;
-  utilityPanelTab: "diff" | "files" | "peers";
+  utilityPanelTab: "diff" | "files" | "peers" | "shell";
   collapsedRepoKeys: string[];
 }
 
@@ -138,6 +139,26 @@ export interface FileDiff {
   worktreeId: number;
   path: string;
   staged: boolean;
+  patch: string;
+  message: string;
+}
+
+export interface GitActionResult {
+  message: string;
+}
+
+export interface GitCommitSummary {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  authorName: string;
+  authorDate: string;
+}
+
+export interface CommitDiff {
+  worktreeId: number;
+  baseRef: string;
+  headRef: string;
   patch: string;
   message: string;
 }

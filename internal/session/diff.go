@@ -11,14 +11,12 @@ import (
 )
 
 func (m *Manager) WorktreeDiff(worktreeID int) (WorktreeDiff, error) {
-	m.mu.RLock()
-	worktree := m.findWorktreeByIDLocked(worktreeID)
-	m.mu.RUnlock()
-	if worktree == nil {
-		return WorktreeDiff{}, fmt.Errorf("worktree %d not found", worktreeID)
+	rootPath, branchName, err := m.worktreeRootPathAndBranch(worktreeID)
+	if err != nil {
+		return WorktreeDiff{}, err
 	}
 
-	return loadWorktreeDiff(worktree.ID, worktree.RootPath, worktree.GitBranch)
+	return loadWorktreeDiff(worktreeID, rootPath, branchName)
 }
 
 func (m *Manager) FileDiff(worktreeID int, path string, staged bool) (FileDiff, error) {
