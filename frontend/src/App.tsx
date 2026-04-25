@@ -991,6 +991,123 @@ function App() {
           onPointerDown={paneLayout.beginSidebarResize}
         />
 
+        <UtilityPanel
+          clearingPeerMessages={peerPanel.clearingPeerMessages}
+          deletingPeerMessageId={peerPanel.deletingPeerMessageId}
+          diffBodyState={diffPanel.bodyState}
+          diffPanelStyle={diffPanel.diffPanelStyle}
+          diffTextZoom={diffPanel.diffTextZoom}
+          filesBody={
+            <FilesPanel
+              ref={filesPanelRef}
+              activeFilePath={filesPanel.activeFile?.path ?? null}
+              activeWorktreeId={activeWorktree?.id ?? null}
+              directoryStates={filesPanel.directoryStates}
+              expandedDirectoryPaths={filesPanel.expandedDirectoryPaths}
+              openingFilePath={filesPanel.openingFilePath}
+              rootDirectoryState={filesPanel.rootDirectoryState}
+              worktreeRootPath={activeWorktree?.rootPath ?? null}
+              onLoadDirectory={filesPanel.loadDirectory}
+              onOpenFile={filesPanel.openFile}
+              onToggleDirectory={filesPanel.toggleDirectory}
+            />
+          }
+          filesMeta={fileEditorShell.filesPanelMeta}
+          filesTitle={fileEditorShell.filesPanelTitle}
+          fullscreen={paneLayout.diffPanelFullscreen}
+          isOpen={paneLayout.diffPanelOpen}
+          livePeerCount={peerPanel.livePeerCount}
+          livePeers={peerPanel.livePeers}
+          recentMessageCount={peerPanel.recentMessageCount}
+          recentMessages={peerPanel.recentMessages}
+          repoName={activeRepo?.name ?? null}
+          shellBody={
+            activeWorktree ? (
+              activeUtilityShellSession ? (
+                <div className="utility-shell-panel">
+                  <TerminalStage
+                    ref={shellTerminalRef}
+                    activeSessionId={activeUtilityShellSession.id}
+                    autoFocusActive={shellPanelActive && terminalAutoFocusActive}
+                    fontSize={paneLayout.terminalFontSize}
+                    sessions={[activeUtilityShellSession]}
+                    onInput={(sessionId, data) => {
+                      void sendSessionInput(sessionId, data);
+                    }}
+                    onResize={(sessionId, cols, rows) => {
+                      void resizeSession(sessionId, cols, rows);
+                    }}
+                    onSessionCwdChange={handleSessionCwdChange}
+                  />
+                </div>
+              ) : shellRailLoading ? (
+                <div className="diff-panel__empty">Starting shell…</div>
+              ) : shellRailError ? (
+                <div className="diff-panel__empty is-error">{shellRailError}</div>
+              ) : (
+                <div className="diff-panel__empty">Shell unavailable.</div>
+              )
+            ) : (
+              <div className="diff-panel__empty">
+                Select a session to open a shell.
+              </div>
+            )
+          }
+          tab={paneLayout.utilityPanelTab}
+          utilityLabel={activeWorktree ? activeWorktreeMeta.label : null}
+          zoomInEnabled={diffPanel.canZoomIn}
+          zoomOutEnabled={diffPanel.canZoomOut}
+          onClearPeerMessages={() => {
+            void peerPanel.handleClearPeerMessages();
+          }}
+          onCommitDiffChanges={(message) => {
+            return diffPanel.commitChanges(message);
+          }}
+          onClose={() => {
+            void fileEditorShell.closeUtilityPanel();
+          }}
+          onCreateDiffBranch={(branchName) => {
+            return diffPanel.createBranch(branchName);
+          }}
+          onDeletePeerMessage={(messageId) => {
+            void peerPanel.handleDeletePeerMessage(messageId);
+          }}
+          onChangeDiffMode={diffPanel.setMode}
+          onOpenDiffFile={(path) => {
+            void filesPanel.openFile(path);
+          }}
+          onPushDiffChanges={() => {
+            void diffPanel.pushChanges();
+          }}
+          onRefreshDiff={() => {
+            void diffPanel.refreshDiffPanel();
+          }}
+          onResetDiffTextZoom={diffPanel.resetDiffTextZoom}
+          onSelectHistoryDiffBase={diffPanel.selectHistoryBase}
+          onSelectHistoryDiffHead={diffPanel.selectHistoryHead}
+          onStageDiffChanges={() => {
+            void diffPanel.stageAll();
+          }}
+          onStageDiffPath={(path) => {
+            void diffPanel.stagePath(path);
+          }}
+          onToggleDiffTarget={diffPanel.toggleDiffTarget}
+          onUnstageDiffPath={(path) => {
+            void diffPanel.unstagePath(path);
+          }}
+          onToggleFullscreen={() =>
+            paneLayout.setDiffPanelFullscreen((current) => !current)
+          }
+          onZoomInDiff={diffPanel.zoomIn}
+          onZoomOutDiff={diffPanel.zoomOut}
+        />
+
+        <div
+          aria-hidden={!paneLayout.diffPanelOpen || paneLayout.diffPanelFullscreen}
+          className={`diff-resizer${paneLayout.diffPanelOpen && !paneLayout.diffPanelFullscreen ? "" : " is-hidden"}`}
+          onPointerDown={paneLayout.beginDiffPanelResize}
+        />
+
         <main className="main-panel">
           <MainHeader
             activeAgentId={resolvedActiveSession?.adapterId ?? null}
@@ -1087,119 +1204,6 @@ function App() {
 
           {state.notice ? <div className="notice-banner">{state.notice}</div> : null}
         </main>
-
-        <div
-          aria-hidden={!paneLayout.diffPanelOpen || paneLayout.diffPanelFullscreen}
-          className={`diff-resizer${paneLayout.diffPanelOpen && !paneLayout.diffPanelFullscreen ? "" : " is-hidden"}`}
-          onPointerDown={paneLayout.beginDiffPanelResize}
-        />
-
-        <UtilityPanel
-          clearingPeerMessages={peerPanel.clearingPeerMessages}
-          deletingPeerMessageId={peerPanel.deletingPeerMessageId}
-          diffBodyState={diffPanel.bodyState}
-          diffPanelStyle={diffPanel.diffPanelStyle}
-          diffTextZoom={diffPanel.diffTextZoom}
-          filesBody={
-            <FilesPanel
-              ref={filesPanelRef}
-              activeFilePath={filesPanel.activeFile?.path ?? null}
-              activeWorktreeId={activeWorktree?.id ?? null}
-              directoryStates={filesPanel.directoryStates}
-              expandedDirectoryPaths={filesPanel.expandedDirectoryPaths}
-              openingFilePath={filesPanel.openingFilePath}
-              rootDirectoryState={filesPanel.rootDirectoryState}
-              onLoadDirectory={filesPanel.loadDirectory}
-              onOpenFile={filesPanel.openFile}
-              onToggleDirectory={filesPanel.toggleDirectory}
-            />
-          }
-          filesMeta={fileEditorShell.filesPanelMeta}
-          filesTitle={fileEditorShell.filesPanelTitle}
-          fullscreen={paneLayout.diffPanelFullscreen}
-          isOpen={paneLayout.diffPanelOpen}
-          livePeerCount={peerPanel.livePeerCount}
-          livePeers={peerPanel.livePeers}
-          recentMessageCount={peerPanel.recentMessageCount}
-          recentMessages={peerPanel.recentMessages}
-          repoName={activeRepo?.name ?? null}
-          shellBody={
-            activeWorktree ? (
-              activeUtilityShellSession ? (
-                <div className="utility-shell-panel">
-                  <TerminalStage
-                    ref={shellTerminalRef}
-                    activeSessionId={activeUtilityShellSession.id}
-                    autoFocusActive={shellPanelActive && terminalAutoFocusActive}
-                    fontSize={paneLayout.terminalFontSize}
-                    sessions={[activeUtilityShellSession]}
-                    onInput={(sessionId, data) => {
-                      void sendSessionInput(sessionId, data);
-                    }}
-                    onResize={(sessionId, cols, rows) => {
-                      void resizeSession(sessionId, cols, rows);
-                    }}
-                    onSessionCwdChange={handleSessionCwdChange}
-                  />
-                </div>
-              ) : shellRailLoading ? (
-                <div className="diff-panel__empty">Starting shell…</div>
-              ) : shellRailError ? (
-                <div className="diff-panel__empty is-error">{shellRailError}</div>
-              ) : (
-                <div className="diff-panel__empty">Shell unavailable.</div>
-              )
-            ) : (
-              <div className="diff-panel__empty">
-                Select a session to open a shell.
-              </div>
-            )
-          }
-          tab={paneLayout.utilityPanelTab}
-          utilityLabel={activeWorktree ? activeWorktreeMeta.label : null}
-          zoomInEnabled={diffPanel.canZoomIn}
-          zoomOutEnabled={diffPanel.canZoomOut}
-          onClearPeerMessages={() => {
-            void peerPanel.handleClearPeerMessages();
-          }}
-          onCommitDiffChanges={(message) => {
-            return diffPanel.commitChanges(message);
-          }}
-          onClose={() => {
-            void fileEditorShell.closeUtilityPanel();
-          }}
-          onCreateDiffBranch={(branchName) => {
-            return diffPanel.createBranch(branchName);
-          }}
-          onDeletePeerMessage={(messageId) => {
-            void peerPanel.handleDeletePeerMessage(messageId);
-          }}
-          onChangeDiffMode={diffPanel.setMode}
-          onPushDiffChanges={() => {
-            void diffPanel.pushChanges();
-          }}
-          onRefreshDiff={() => {
-            void diffPanel.refreshDiffPanel();
-          }}
-          onResetDiffTextZoom={diffPanel.resetDiffTextZoom}
-          onSelectHistoryDiffBase={diffPanel.selectHistoryBase}
-          onSelectHistoryDiffHead={diffPanel.selectHistoryHead}
-          onStageDiffChanges={() => {
-            void diffPanel.stageAll();
-          }}
-          onStageDiffPath={(path) => {
-            void diffPanel.stagePath(path);
-          }}
-          onToggleDiffTarget={diffPanel.toggleDiffTarget}
-          onUnstageDiffPath={(path) => {
-            void diffPanel.unstagePath(path);
-          }}
-          onToggleFullscreen={() =>
-            paneLayout.setDiffPanelFullscreen((current) => !current)
-          }
-          onZoomInDiff={diffPanel.zoomIn}
-          onZoomOutDiff={diffPanel.zoomOut}
-        />
       </div>
 
       <AgentPicker

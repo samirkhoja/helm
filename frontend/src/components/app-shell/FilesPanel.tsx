@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  CopyPlus,
   FileText,
   Folder,
   LoaderCircle,
@@ -15,9 +16,11 @@ export type FilesPanelHandle = {
   focusPrimaryAction: () => void;
 };
 
+type CopyKind = "relative" | "absolute";
+
 type TreeDirectoryProps = {
   activeFilePath: string | null;
-  copiedFilePath: string | null;
+  copiedFilePath: { path: string; kind: CopyKind } | null;
   depth: number;
   directoryStates: Record<string, FileDirectoryState>;
   entries: Array<{
@@ -27,11 +30,12 @@ type TreeDirectoryProps = {
     path: string;
   }>;
   expandedPaths: Set<string>;
-  onCopyFilePath: (path: string) => void;
+  onCopyFilePath: (path: string, kind: CopyKind) => void;
   onLoadDirectory: (path: string) => void;
   onOpenFile: (path: string) => void;
   onToggleDirectory: (path: string) => void;
   openingFilePath: string | null;
+  worktreeRootPath: string | null;
 };
 
 type FilesPanelProps = {
@@ -44,7 +48,17 @@ type FilesPanelProps = {
   onToggleDirectory: (path: string) => void;
   openingFilePath: string | null;
   rootDirectoryState: FileDirectoryState;
+  worktreeRootPath: string | null;
 };
+
+function joinAbsolutePath(rootPath: string, relativePath: string): string {
+  const trimmedRoot = rootPath.replace(/\/+$/, "");
+  const trimmedRelative = relativePath.replace(/^\/+/, "");
+  if (!trimmedRelative) {
+    return trimmedRoot;
+  }
+  return `${trimmedRoot}/${trimmedRelative}`;
+}
 
 function TreeDirectory(props: TreeDirectoryProps) {
   const {
@@ -59,6 +73,7 @@ function TreeDirectory(props: TreeDirectoryProps) {
     onOpenFile,
     onToggleDirectory,
     openingFilePath,
+    worktreeRootPath,
   } = props;
 
   return (
@@ -67,9 +82,15 @@ function TreeDirectory(props: TreeDirectoryProps) {
         const isDirectory = entry.kind === "directory";
         const isExpanded = isDirectory && expandedPaths.has(entry.path);
         const isOpening = !isDirectory && openingFilePath === entry.path;
-        const isCopied = !isDirectory && copiedFilePath === entry.path;
+        const copiedKind =
+          !isDirectory && copiedFilePath?.path === entry.path
+            ? copiedFilePath.kind
+            : null;
         const childState = isDirectory
           ? directoryStates[entry.path] ?? null
+          : null;
+        const absolutePath = worktreeRootPath
+          ? joinAbsolutePath(worktreeRootPath, entry.path)
           : null;
 
         return (
@@ -115,22 +136,46 @@ function TreeDirectory(props: TreeDirectoryProps) {
                 ) : null}
               </button>
               {!isDirectory ? (
-                <button
-                  aria-label={`Copy path of ${entry.path}`}
-                  className="files-tree__copy"
-                  title={isCopied ? "Copied" : "Copy file path"}
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onCopyFilePath(entry.path);
-                  }}
-                >
-                  {isCopied ? (
-                    <Check aria-hidden="true" size={13} strokeWidth={2} />
-                  ) : (
-                    <Copy aria-hidden="true" size={13} strokeWidth={2} />
-                  )}
-                </button>
+                <>
+                  <button
+                    aria-label={`Copy relative path of ${entry.path}`}
+                    className="files-tree__copy"
+                    title={
+                      copiedKind === "relative" ? "Copied" : "Copy relative path"
+                    }
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onCopyFilePath(entry.path, "relative");
+                    }}
+                  >
+                    {copiedKind === "relative" ? (
+                      <Check aria-hidden="true" size={13} strokeWidth={2} />
+                    ) : (
+                      <Copy aria-hidden="true" size={13} strokeWidth={2} />
+                    )}
+                  </button>
+                  {absolutePath ? (
+                    <button
+                      aria-label={`Copy full path of ${entry.path}`}
+                      className="files-tree__copy"
+                      title={
+                        copiedKind === "absolute" ? "Copied" : "Copy full path"
+                      }
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onCopyFilePath(entry.path, "absolute");
+                      }}
+                    >
+                      {copiedKind === "absolute" ? (
+                        <Check aria-hidden="true" size={13} strokeWidth={2} />
+                      ) : (
+                        <CopyPlus aria-hidden="true" size={13} strokeWidth={2} />
+                      )}
+                    </button>
+                  ) : null}
+                </>
               ) : null}
             </div>
 
@@ -170,6 +215,7 @@ function TreeDirectory(props: TreeDirectoryProps) {
                     onOpenFile={onOpenFile}
                     onToggleDirectory={onToggleDirectory}
                     openingFilePath={openingFilePath}
+                    worktreeRootPath={worktreeRootPath}
                   />
                 ) : (
                   <div
@@ -200,14 +246,22 @@ export const FilesPanel = forwardRef<FilesPanelHandle, FilesPanelProps>(
       onToggleDirectory,
       openingFilePath,
       rootDirectoryState,
+      worktreeRootPath,
     } = props;
 
     const rootRef = useRef<HTMLDivElement | null>(null);
     const expandedPaths = new Set(expandedDirectoryPaths);
-    const [copiedFilePath, setCopiedFilePath] = useState<string | null>(null);
+    const [copiedFilePath, setCopiedFilePath] = useState<{
+      path: string;
+      kind: CopyKind;
+    } | null>(null);
     const copyResetTimerRef = useRef<number | null>(null);
 
-    const copyFilePath = (relativePath: string) => {
+    const copyFilePath = (relativePath: string, kind: CopyKind) => {
+      const value =
+        kind === "absolute" && worktreeRootPath
+          ? joinAbsolutePath(worktreeRootPath, relativePath)
+          : relativePath;
       const writeToClipboard =
         typeof navigator !== "undefined" && navigator.clipboard?.writeText
           ? navigator.clipboard.writeText.bind(navigator.clipboard)
@@ -217,7 +271,7 @@ export const FilesPanel = forwardRef<FilesPanelHandle, FilesPanelProps>(
         if (!success) {
           return;
         }
-        setCopiedFilePath(relativePath);
+        setCopiedFilePath({ path: relativePath, kind });
         if (copyResetTimerRef.current !== null) {
           window.clearTimeout(copyResetTimerRef.current);
         }
@@ -228,7 +282,7 @@ export const FilesPanel = forwardRef<FilesPanelHandle, FilesPanelProps>(
       };
 
       if (writeToClipboard) {
-        writeToClipboard(relativePath).then(
+        writeToClipboard(value).then(
           () => finish(true),
           () => finish(false),
         );
@@ -341,6 +395,7 @@ export const FilesPanel = forwardRef<FilesPanelHandle, FilesPanelProps>(
           onOpenFile={onOpenFile}
           onToggleDirectory={onToggleDirectory}
           openingFilePath={openingFilePath}
+          worktreeRootPath={worktreeRootPath}
         />
       </div>
     );

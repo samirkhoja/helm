@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { LoaderCircle, Minus, Plus } from "lucide-react";
+import { ExternalLink, LoaderCircle, Minus, Plus } from "lucide-react";
 
 import type {
   CommitDiffState,
@@ -15,6 +15,7 @@ type DiffPanelProps = {
   onChangeMode: (mode: DiffMode) => void;
   onCommit: (message: string) => Promise<boolean>;
   onCreateBranch: (branchName: string) => Promise<boolean>;
+  onOpenFile: (path: string) => void;
   onPush: () => void;
   onSelectHistoryBase: (hash: string) => void;
   onSelectHistoryHead: (hash: string) => void;
@@ -162,6 +163,7 @@ export function DiffPanel(props: DiffPanelProps) {
     onChangeMode,
     onCommit,
     onCreateBranch,
+    onOpenFile,
     onPush,
     onSelectHistoryBase,
     onSelectHistoryHead,
@@ -434,6 +436,24 @@ export function DiffPanel(props: DiffPanelProps) {
                                 </span>
                               ) : null}
                             </button>
+                            {section.key !== "untracked" ? (
+                              <button
+                                aria-label={`Open ${item.path}`}
+                                className="diff-file-row__action"
+                                title="Open file"
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onOpenFile(item.path);
+                                }}
+                              >
+                                <ExternalLink
+                                  aria-hidden="true"
+                                  size={14}
+                                  strokeWidth={2}
+                                />
+                              </button>
+                            ) : null}
                             {renderFileRowAction(
                               item,
                               section.key as "staged" | "unstaged" | "untracked",

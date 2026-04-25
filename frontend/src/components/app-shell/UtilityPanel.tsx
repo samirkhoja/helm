@@ -34,6 +34,7 @@ type UtilityPanelProps = {
   onCreateDiffBranch: (branchName: string) => Promise<boolean>;
   onDeletePeerMessage: (messageId: number) => void;
   onChangeDiffMode: (mode: DiffMode) => void;
+  onOpenDiffFile: (path: string) => void;
   onPushDiffChanges: () => void;
   onRefreshDiff: () => void;
   onResetDiffTextZoom: () => void;
@@ -76,6 +77,7 @@ export function UtilityPanel(props: UtilityPanelProps) {
     onCreateDiffBranch,
     onDeletePeerMessage,
     onChangeDiffMode,
+    onOpenDiffFile,
     onPushDiffChanges,
     onRefreshDiff,
     onResetDiffTextZoom,
@@ -294,6 +296,7 @@ export function UtilityPanel(props: UtilityPanelProps) {
                   onChangeMode={onChangeDiffMode}
                   onCommit={onCommitDiffChanges}
                   onCreateBranch={onCreateDiffBranch}
+                  onOpenFile={onOpenDiffFile}
                   onPush={onPushDiffChanges}
                   onSelectHistoryBase={onSelectHistoryDiffBase}
                   onSelectHistoryHead={onSelectHistoryDiffHead}

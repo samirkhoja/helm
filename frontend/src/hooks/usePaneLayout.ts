@@ -218,7 +218,7 @@ export function usePaneLayout(options: UsePaneLayoutOptions) {
               dragState.startWidth + (event.clientX - dragState.startX),
             )
           : clampDiffPanelWidth(
-              dragState.startWidth + (dragState.startX - event.clientX),
+              dragState.startWidth + (event.clientX - dragState.startX),
             );
 
       dragState.currentWidth = nextWidth;
@@ -306,7 +306,7 @@ export function usePaneLayout(options: UsePaneLayoutOptions) {
     "--diff-resizer-track": diffPanelOpen ? "10px" : "0px",
     "--diff-track": diffPanelOpen ? `${diffPanelWidth}px` : "0px",
     gridTemplateColumns:
-      "var(--sidebar-track) var(--sidebar-resizer-track) minmax(0, 1fr) var(--diff-resizer-track) var(--diff-track)",
+      "var(--sidebar-track) var(--sidebar-resizer-track) var(--diff-track) var(--diff-resizer-track) minmax(0, 1fr)",
   } as CSSProperties;
 
   return {
