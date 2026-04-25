@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { LoaderCircle, Minus, Plus } from "lucide-react";
 
 import type {
   CommitDiffState,
   DiffBodyState,
   DiffMode,
+  DiffSectionItemViewModel,
   DiffTarget,
   FileDiffState,
 } from "../../hooks/useDiffPanel";
@@ -17,7 +19,9 @@ type DiffPanelProps = {
   onSelectHistoryBase: (hash: string) => void;
   onSelectHistoryHead: (hash: string) => void;
   onStageAll: () => void;
+  onStagePath: (path: string) => void;
   onToggleDiffTarget: (target: DiffTarget) => void;
+  onUnstagePath: (path: string) => void;
 };
 
 function diffLineClass(line: string) {
@@ -110,6 +114,48 @@ function compactCommitLabel(
   return `${commit.shortHash} • ${commit.subject}`;
 }
 
+function renderFileRowAction(
+  item: DiffSectionItemViewModel,
+  sectionKey: "staged" | "unstaged" | "untracked",
+  onStagePath: (path: string) => void,
+  onUnstagePath: (path: string) => void,
+) {
+  const isStageAction = sectionKey !== "staged";
+  const busy = item.pathBusy !== null;
+  const label = isStageAction ? `Stage ${item.path}` : `Unstage ${item.path}`;
+
+  return (
+    <button
+      aria-label={label}
+      className="diff-file-row__action"
+      disabled={busy}
+      title={isStageAction ? "Stage file" : "Unstage file"}
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        if (isStageAction) {
+          onStagePath(item.path);
+        } else {
+          onUnstagePath(item.path);
+        }
+      }}
+    >
+      {busy ? (
+        <LoaderCircle
+          aria-hidden="true"
+          className="diff-file-row__spinner"
+          size={14}
+          strokeWidth={2}
+        />
+      ) : isStageAction ? (
+        <Plus aria-hidden="true" size={14} strokeWidth={2.2} />
+      ) : (
+        <Minus aria-hidden="true" size={14} strokeWidth={2.2} />
+      )}
+    </button>
+  );
+}
+
 export function DiffPanel(props: DiffPanelProps) {
   const {
     bodyState,
@@ -120,7 +166,9 @@ export function DiffPanel(props: DiffPanelProps) {
     onSelectHistoryBase,
     onSelectHistoryHead,
     onStageAll,
+    onStagePath,
     onToggleDiffTarget,
+    onUnstagePath,
   } = props;
 
   const [branchFormOpen, setBranchFormOpen] = useState(false);
@@ -368,23 +416,31 @@ export function DiffPanel(props: DiffPanelProps) {
                     <div className="diff-file-list">
                       {section.items.map((item) => (
                         <div className="diff-file-entry" key={item.key}>
-                          <button
-                            className={`diff-file-row${item.isOpen ? " is-active" : ""}`}
-                            type="button"
-                            onClick={() => onToggleDiffTarget(item.target)}
-                          >
-                            <span className="diff-file-row__path">{item.path}</span>
-                            {item.addedLabel || item.removedLabel ? (
-                              <span className="diff-file-row__stats">
-                                {item.addedLabel ? (
-                                  <small className="diff-add">{item.addedLabel}</small>
-                                ) : null}
-                                {item.removedLabel ? (
-                                  <small className="diff-remove">{item.removedLabel}</small>
-                                ) : null}
-                              </span>
-                            ) : null}
-                          </button>
+                          <div className="diff-file-entry__row">
+                            <button
+                              className={`diff-file-row${item.isOpen ? " is-active" : ""}`}
+                              type="button"
+                              onClick={() => onToggleDiffTarget(item.target)}
+                            >
+                              <span className="diff-file-row__path">{item.path}</span>
+                              {item.addedLabel || item.removedLabel ? (
+                                <span className="diff-file-row__stats">
+                                  {item.addedLabel ? (
+                                    <small className="diff-add">{item.addedLabel}</small>
+                                  ) : null}
+                                  {item.removedLabel ? (
+                                    <small className="diff-remove">{item.removedLabel}</small>
+                                  ) : null}
+                                </span>
+                              ) : null}
+                            </button>
+                            {renderFileRowAction(
+                              item,
+                              section.key as "staged" | "unstaged" | "untracked",
+                              onStagePath,
+                              onUnstagePath,
+                            )}
+                          </div>
                           {item.isOpen ? (
                             <div className="diff-inline">
                               {renderInlineDiff(item.fileDiffState)}

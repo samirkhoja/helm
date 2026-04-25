@@ -1187,7 +1187,13 @@ function App() {
           onStageDiffChanges={() => {
             void diffPanel.stageAll();
           }}
+          onStageDiffPath={(path) => {
+            void diffPanel.stagePath(path);
+          }}
           onToggleDiffTarget={diffPanel.toggleDiffTarget}
+          onUnstageDiffPath={(path) => {
+            void diffPanel.unstagePath(path);
+          }}
           onToggleFullscreen={() =>
             paneLayout.setDiffPanelFullscreen((current) => !current)
           }

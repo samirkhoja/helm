@@ -40,7 +40,9 @@ type UtilityPanelProps = {
   onSelectHistoryDiffBase: (hash: string) => void;
   onSelectHistoryDiffHead: (hash: string) => void;
   onStageDiffChanges: () => void;
+  onStageDiffPath: (path: string) => void;
   onToggleDiffTarget: (target: DiffTarget) => void;
+  onUnstageDiffPath: (path: string) => void;
   onToggleFullscreen: () => void;
   onZoomInDiff: () => void;
   onZoomOutDiff: () => void;
@@ -80,7 +82,9 @@ export function UtilityPanel(props: UtilityPanelProps) {
     onSelectHistoryDiffBase,
     onSelectHistoryDiffHead,
     onStageDiffChanges,
+    onStageDiffPath,
     onToggleDiffTarget,
+    onUnstageDiffPath,
     onToggleFullscreen,
     onZoomInDiff,
     onZoomOutDiff,
@@ -294,7 +298,9 @@ export function UtilityPanel(props: UtilityPanelProps) {
                   onSelectHistoryBase={onSelectHistoryDiffBase}
                   onSelectHistoryHead={onSelectHistoryDiffHead}
                   onStageAll={onStageDiffChanges}
+                  onStagePath={onStageDiffPath}
                   onToggleDiffTarget={onToggleDiffTarget}
+                  onUnstagePath={onUnstageDiffPath}
                 />
               ) : tab === "files" ? (
                 filesBody

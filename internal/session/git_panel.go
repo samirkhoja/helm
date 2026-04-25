@@ -47,6 +47,36 @@ func (m *Manager) StageWorktreeAll(worktreeID int) (GitActionResult, error) {
 	return GitActionResult{Message: "Staged all changes."}, nil
 }
 
+func (m *Manager) StageWorktreePath(worktreeID int, path string) (GitActionResult, error) {
+	rootPath, err := m.worktreeRootPath(worktreeID)
+	if err != nil {
+		return GitActionResult{}, err
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return GitActionResult{}, fmt.Errorf("path is required")
+	}
+	if _, err := runGitText(rootPath, "add", "--", path); err != nil {
+		return GitActionResult{}, err
+	}
+	return GitActionResult{Message: fmt.Sprintf("Staged %s.", path)}, nil
+}
+
+func (m *Manager) UnstageWorktreePath(worktreeID int, path string) (GitActionResult, error) {
+	rootPath, err := m.worktreeRootPath(worktreeID)
+	if err != nil {
+		return GitActionResult{}, err
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return GitActionResult{}, fmt.Errorf("path is required")
+	}
+	if _, err := runGitText(rootPath, "restore", "--staged", "--", path); err != nil {
+		return GitActionResult{}, err
+	}
+	return GitActionResult{Message: fmt.Sprintf("Unstaged %s.", path)}, nil
+}
+
 func (m *Manager) CommitWorktree(worktreeID int, message string) (GitActionResult, error) {
 	rootPath, err := m.worktreeRootPath(worktreeID)
 	if err != nil {

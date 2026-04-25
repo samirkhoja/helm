@@ -9,6 +9,8 @@ import {
   getWorktreeDiff,
   pushWorktree,
   stageWorktreeAll,
+  stageWorktreePath,
+  unstageWorktreePath,
 } from "../backend";
 import type {
   AppSnapshot,
@@ -38,12 +40,15 @@ export type CommitDiffState = {
   data: CommitDiff | null;
 };
 
+export type DiffFilePathBusyKind = "stagePath" | "unstagePath";
+
 export type DiffSectionItemViewModel = {
   addedLabel: string | null;
   fileDiffState: FileDiffState;
   isOpen: boolean;
   key: string;
   path: string;
+  pathBusy: DiffFilePathBusyKind | null;
   removedLabel: string | null;
   target: DiffTarget;
 };
@@ -239,6 +244,10 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
   const [busyAction, setBusyAction] = useState<
     "branch" | "commit" | "push" | "stage" | null
   >(null);
+  const [busyPathAction, setBusyPathAction] = useState<{
+    path: string;
+    kind: DiffFilePathBusyKind;
+  } | null>(null);
 
   const fileDiffCacheRef = useRef(new Map<string, FileDiff>());
   const diffSummarySignatureRef = useRef("");
@@ -690,6 +699,38 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
     return true;
   };
 
+  const stagePath = async (path: string) => {
+    if (!activeWorktreeId || busyPathAction) {
+      return;
+    }
+
+    setBusyPathAction({ kind: "stagePath", path });
+    try {
+      await stageWorktreePath(activeWorktreeId, path);
+      await loadWorktreeDiff(activeWorktreeId, false);
+    } catch (error) {
+      setActionStatus({ kind: "error", message: String(error) });
+    } finally {
+      setBusyPathAction(null);
+    }
+  };
+
+  const unstagePath = async (path: string) => {
+    if (!activeWorktreeId || busyPathAction) {
+      return;
+    }
+
+    setBusyPathAction({ kind: "unstagePath", path });
+    try {
+      await unstageWorktreePath(activeWorktreeId, path);
+      await loadWorktreeDiff(activeWorktreeId, false);
+    } catch (error) {
+      setActionStatus({ kind: "error", message: String(error) });
+    } finally {
+      setBusyPathAction(null);
+    }
+  };
+
   const stageAll = async () => {
     if (!activeWorktreeId) {
       return;
@@ -783,6 +824,14 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
       );
     };
 
+    const pathBusyKindFor = (
+      path: string,
+      expected: DiffFilePathBusyKind,
+    ): DiffFilePathBusyKind | null =>
+      busyPathAction && busyPathAction.path === path && busyPathAction.kind === expected
+        ? expected
+        : null;
+
     return [
       {
         emptyText: "No staged changes.",
@@ -800,6 +849,7 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
             ),
             key: `staged-${item.path}`,
             path: item.path,
+            pathBusy: pathBusyKindFor(item.path, "unstagePath"),
             removedLabel: formatDiffDelta(item.removed, "-"),
             target,
           };
@@ -823,6 +873,7 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
             ),
             key: `unstaged-${item.path}`,
             path: item.path,
+            pathBusy: pathBusyKindFor(item.path, "stagePath"),
             removedLabel: formatDiffDelta(item.removed, "-"),
             target,
           };
@@ -846,6 +897,7 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
             ),
             key: `untracked-${path}`,
             path,
+            pathBusy: pathBusyKindFor(path, "stagePath"),
             removedLabel: null,
             target,
           };
@@ -854,7 +906,7 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
         title: "Untracked",
       },
     ];
-  }, [activeWorktreeId, diffState.data, fileDiffStates, openDiffTargets]);
+  }, [activeWorktreeId, busyPathAction, diffState.data, fileDiffStates, openDiffTargets]);
 
   const bodyState = useMemo<DiffBodyState>(() => {
     if (!activeWorktreeId) {
@@ -949,7 +1001,9 @@ export function useDiffPanel(options: UseDiffPanelOptions) {
       })),
     setMode: changeMode,
     stageAll,
+    stagePath,
     toggleDiffTarget,
+    unstagePath,
     zoomIn: () => adjustDiffTextZoom(diffTextZoomStep),
     zoomOut: () => adjustDiffTextZoom(-diffTextZoomStep),
   };

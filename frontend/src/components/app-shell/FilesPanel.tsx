@@ -1,7 +1,9 @@
-import { forwardRef, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import {
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   FileText,
   Folder,
   LoaderCircle,
@@ -15,6 +17,7 @@ export type FilesPanelHandle = {
 
 type TreeDirectoryProps = {
   activeFilePath: string | null;
+  copiedFilePath: string | null;
   depth: number;
   directoryStates: Record<string, FileDirectoryState>;
   entries: Array<{
@@ -24,6 +27,7 @@ type TreeDirectoryProps = {
     path: string;
   }>;
   expandedPaths: Set<string>;
+  onCopyFilePath: (path: string) => void;
   onLoadDirectory: (path: string) => void;
   onOpenFile: (path: string) => void;
   onToggleDirectory: (path: string) => void;
@@ -45,10 +49,12 @@ type FilesPanelProps = {
 function TreeDirectory(props: TreeDirectoryProps) {
   const {
     activeFilePath,
+    copiedFilePath,
     depth,
     directoryStates,
     entries,
     expandedPaths,
+    onCopyFilePath,
     onLoadDirectory,
     onOpenFile,
     onToggleDirectory,
@@ -61,49 +67,72 @@ function TreeDirectory(props: TreeDirectoryProps) {
         const isDirectory = entry.kind === "directory";
         const isExpanded = isDirectory && expandedPaths.has(entry.path);
         const isOpening = !isDirectory && openingFilePath === entry.path;
+        const isCopied = !isDirectory && copiedFilePath === entry.path;
         const childState = isDirectory
           ? directoryStates[entry.path] ?? null
           : null;
 
         return (
           <div className="files-tree__node" key={entry.path}>
-            <button
-              aria-busy={isOpening}
-              className={`files-tree__row${activeFilePath === entry.path ? " is-active" : ""}${isOpening ? " is-pending" : ""}`}
-              style={{ paddingLeft: `${depth * 14 + 10}px` }}
-              type="button"
-              onClick={() => {
-                if (isDirectory) {
-                  onToggleDirectory(entry.path);
-                  return;
-                }
-                onOpenFile(entry.path);
-              }}
+            <div
+              className={`files-tree__row-wrap${activeFilePath === entry.path ? " is-active" : ""}`}
             >
-              <span className="files-tree__icon">
-                {isDirectory ? (
-                  isExpanded ? (
-                    <ChevronDown aria-hidden="true" size={13} strokeWidth={1.8} />
+              <button
+                aria-busy={isOpening}
+                className={`files-tree__row${activeFilePath === entry.path ? " is-active" : ""}${isOpening ? " is-pending" : ""}`}
+                style={{ paddingLeft: `${depth * 14 + 10}px` }}
+                type="button"
+                onClick={() => {
+                  if (isDirectory) {
+                    onToggleDirectory(entry.path);
+                    return;
+                  }
+                  onOpenFile(entry.path);
+                }}
+              >
+                <span className="files-tree__icon">
+                  {isDirectory ? (
+                    isExpanded ? (
+                      <ChevronDown aria-hidden="true" size={13} strokeWidth={1.8} />
+                    ) : (
+                      <ChevronRight aria-hidden="true" size={13} strokeWidth={1.8} />
+                    )
                   ) : (
-                    <ChevronRight aria-hidden="true" size={13} strokeWidth={1.8} />
-                  )
-                ) : (
-                  <FileText aria-hidden="true" size={13} strokeWidth={1.8} />
-                )}
-              </span>
-              {isDirectory ? (
-                <Folder aria-hidden="true" className="files-tree__glyph" size={14} />
+                    <FileText aria-hidden="true" size={13} strokeWidth={1.8} />
+                  )}
+                </span>
+                {isDirectory ? (
+                  <Folder aria-hidden="true" className="files-tree__glyph" size={14} />
+                ) : null}
+                <span className="files-tree__label">{entry.name}</span>
+                {isOpening ? (
+                  <LoaderCircle
+                    aria-hidden="true"
+                    className="files-tree__spinner"
+                    size={12}
+                    strokeWidth={1.9}
+                  />
+                ) : null}
+              </button>
+              {!isDirectory ? (
+                <button
+                  aria-label={`Copy path of ${entry.path}`}
+                  className="files-tree__copy"
+                  title={isCopied ? "Copied" : "Copy file path"}
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCopyFilePath(entry.path);
+                  }}
+                >
+                  {isCopied ? (
+                    <Check aria-hidden="true" size={13} strokeWidth={2} />
+                  ) : (
+                    <Copy aria-hidden="true" size={13} strokeWidth={2} />
+                  )}
+                </button>
               ) : null}
-              <span className="files-tree__label">{entry.name}</span>
-              {isOpening ? (
-                <LoaderCircle
-                  aria-hidden="true"
-                  className="files-tree__spinner"
-                  size={12}
-                  strokeWidth={1.9}
-                />
-              ) : null}
-            </button>
+            </div>
 
             {isDirectory && isExpanded ? (
               <div className="files-tree__children">
@@ -131,10 +160,12 @@ function TreeDirectory(props: TreeDirectoryProps) {
                 ) : childState && childState.items.length > 0 ? (
                   <TreeDirectory
                     activeFilePath={activeFilePath}
+                    copiedFilePath={copiedFilePath}
                     depth={depth + 1}
                     directoryStates={directoryStates}
                     entries={childState.items}
                     expandedPaths={expandedPaths}
+                    onCopyFilePath={onCopyFilePath}
                     onLoadDirectory={onLoadDirectory}
                     onOpenFile={onOpenFile}
                     onToggleDirectory={onToggleDirectory}
@@ -173,6 +204,46 @@ export const FilesPanel = forwardRef<FilesPanelHandle, FilesPanelProps>(
 
     const rootRef = useRef<HTMLDivElement | null>(null);
     const expandedPaths = new Set(expandedDirectoryPaths);
+    const [copiedFilePath, setCopiedFilePath] = useState<string | null>(null);
+    const copyResetTimerRef = useRef<number | null>(null);
+
+    const copyFilePath = (relativePath: string) => {
+      const writeToClipboard =
+        typeof navigator !== "undefined" && navigator.clipboard?.writeText
+          ? navigator.clipboard.writeText.bind(navigator.clipboard)
+          : null;
+
+      const finish = (success: boolean) => {
+        if (!success) {
+          return;
+        }
+        setCopiedFilePath(relativePath);
+        if (copyResetTimerRef.current !== null) {
+          window.clearTimeout(copyResetTimerRef.current);
+        }
+        copyResetTimerRef.current = window.setTimeout(() => {
+          setCopiedFilePath(null);
+          copyResetTimerRef.current = null;
+        }, 1500);
+      };
+
+      if (writeToClipboard) {
+        writeToClipboard(relativePath).then(
+          () => finish(true),
+          () => finish(false),
+        );
+      } else {
+        finish(false);
+      }
+    };
+
+    useEffect(() => {
+      return () => {
+        if (copyResetTimerRef.current !== null) {
+          window.clearTimeout(copyResetTimerRef.current);
+        }
+      };
+    }, []);
 
     useImperativeHandle(ref, () => ({
       focusPrimaryAction() {
@@ -260,10 +331,12 @@ export const FilesPanel = forwardRef<FilesPanelHandle, FilesPanelProps>(
       >
         <TreeDirectory
           activeFilePath={activeFilePath}
+          copiedFilePath={copiedFilePath}
           depth={0}
           directoryStates={directoryStates}
           entries={rootDirectoryState.items}
           expandedPaths={expandedPaths}
+          onCopyFilePath={copyFilePath}
           onLoadDirectory={onLoadDirectory}
           onOpenFile={onOpenFile}
           onToggleDirectory={onToggleDirectory}
