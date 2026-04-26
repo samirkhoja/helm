@@ -34,13 +34,16 @@ type UtilityPanelProps = {
   onCreateDiffBranch: (branchName: string) => Promise<boolean>;
   onDeletePeerMessage: (messageId: number) => void;
   onChangeDiffMode: (mode: DiffMode) => void;
+  onOpenDiffFile: (path: string) => void;
   onPushDiffChanges: () => void;
   onRefreshDiff: () => void;
   onResetDiffTextZoom: () => void;
   onSelectHistoryDiffBase: (hash: string) => void;
   onSelectHistoryDiffHead: (hash: string) => void;
   onStageDiffChanges: () => void;
+  onStageDiffPath: (path: string) => void;
   onToggleDiffTarget: (target: DiffTarget) => void;
+  onUnstageDiffPath: (path: string) => void;
   onToggleFullscreen: () => void;
   onZoomInDiff: () => void;
   onZoomOutDiff: () => void;
@@ -74,13 +77,16 @@ export function UtilityPanel(props: UtilityPanelProps) {
     onCreateDiffBranch,
     onDeletePeerMessage,
     onChangeDiffMode,
+    onOpenDiffFile,
     onPushDiffChanges,
     onRefreshDiff,
     onResetDiffTextZoom,
     onSelectHistoryDiffBase,
     onSelectHistoryDiffHead,
     onStageDiffChanges,
+    onStageDiffPath,
     onToggleDiffTarget,
+    onUnstageDiffPath,
     onToggleFullscreen,
     onZoomInDiff,
     onZoomOutDiff,
@@ -290,11 +296,14 @@ export function UtilityPanel(props: UtilityPanelProps) {
                   onChangeMode={onChangeDiffMode}
                   onCommit={onCommitDiffChanges}
                   onCreateBranch={onCreateDiffBranch}
+                  onOpenFile={onOpenDiffFile}
                   onPush={onPushDiffChanges}
                   onSelectHistoryBase={onSelectHistoryDiffBase}
                   onSelectHistoryHead={onSelectHistoryDiffHead}
                   onStageAll={onStageDiffChanges}
+                  onStagePath={onStageDiffPath}
                   onToggleDiffTarget={onToggleDiffTarget}
+                  onUnstagePath={onUnstageDiffPath}
                 />
               ) : tab === "files" ? (
                 filesBody

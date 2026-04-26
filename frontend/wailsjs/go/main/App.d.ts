@@ -60,6 +60,10 @@ export function ShowWindow():Promise<void>;
 
 export function StageWorktreeAll(arg1:number):Promise<session.GitActionResult>;
 
+export function StageWorktreePath(arg1:number,arg2:string):Promise<session.GitActionResult>;
+
+export function UnstageWorktreePath(arg1:number,arg2:string):Promise<session.GitActionResult>;
+
 export function UpdateSessionCWD(arg1:number,arg2:string):Promise<void>;
 
 export function UpdateSessionMode(arg1:number,arg2:string):Promise<session.AppSnapshot>;

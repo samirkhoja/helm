@@ -197,6 +197,80 @@ func TestManagerPushWorktreeUsesGitRemoteResolution(t *testing.T) {
 	}
 }
 
+func TestManagerStageAndUnstageWorktreePath(t *testing.T) {
+	t.Parallel()
+
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+
+	manager := NewManager(newTestRegistry(t), os.Environ(), newFakeStarter(), &fakeSink{}, newTestStore(t))
+	repoRoot := newGitRepo(t, gitPath)
+
+	snapshot, err := manager.CreateWorkspaceSession(repoRoot, "shell")
+	if err != nil {
+		t.Fatalf("CreateWorkspaceSession() error = %v", err)
+	}
+	worktree := snapshot.Repos[0].Worktrees[0]
+
+	if err := os.WriteFile(filepath.Join(repoRoot, "alpha.txt"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(alpha.txt) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "beta.txt"), []byte("beta\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(beta.txt) error = %v", err)
+	}
+
+	stageResult, err := manager.StageWorktreePath(worktree.ID, "alpha.txt")
+	if err != nil {
+		t.Fatalf("StageWorktreePath(alpha.txt) error = %v", err)
+	}
+	if !strings.Contains(stageResult.Message, "alpha.txt") {
+		t.Fatalf("StageWorktreePath() message = %q, want alpha.txt", stageResult.Message)
+	}
+
+	diff, err := manager.WorktreeDiff(worktree.ID)
+	if err != nil {
+		t.Fatalf("WorktreeDiff() error = %v", err)
+	}
+	if len(diff.Staged) != 1 || diff.Staged[0].Path != "alpha.txt" {
+		t.Fatalf("diff.Staged = %#v, want only alpha.txt", diff.Staged)
+	}
+	if len(diff.Untracked) != 1 || diff.Untracked[0] != "beta.txt" {
+		t.Fatalf("diff.Untracked = %#v, want only beta.txt", diff.Untracked)
+	}
+
+	unstageResult, err := manager.UnstageWorktreePath(worktree.ID, "alpha.txt")
+	if err != nil {
+		t.Fatalf("UnstageWorktreePath(alpha.txt) error = %v", err)
+	}
+	if !strings.Contains(unstageResult.Message, "alpha.txt") {
+		t.Fatalf("UnstageWorktreePath() message = %q, want alpha.txt", unstageResult.Message)
+	}
+
+	diffAfter, err := manager.WorktreeDiff(worktree.ID)
+	if err != nil {
+		t.Fatalf("WorktreeDiff() error = %v", err)
+	}
+	if len(diffAfter.Staged) != 0 {
+		t.Fatalf("diffAfter.Staged = %#v, want empty after unstage", diffAfter.Staged)
+	}
+	untracked := map[string]bool{}
+	for _, p := range diffAfter.Untracked {
+		untracked[p] = true
+	}
+	if !untracked["alpha.txt"] || !untracked["beta.txt"] {
+		t.Fatalf("diffAfter.Untracked = %#v, want both alpha.txt and beta.txt", diffAfter.Untracked)
+	}
+
+	if _, err := manager.StageWorktreePath(worktree.ID, ""); err == nil {
+		t.Fatalf("StageWorktreePath(\"\") expected error for empty path")
+	}
+	if _, err := manager.UnstageWorktreePath(worktree.ID, ""); err == nil {
+		t.Fatalf("UnstageWorktreePath(\"\") expected error for empty path")
+	}
+}
+
 func TestManagerGitPanelTracksLiveBranchAfterManualCheckout(t *testing.T) {
 	t.Parallel()
 
