@@ -118,6 +118,14 @@ export function StageWorktreeAll(arg1) {
   return window['go']['main']['App']['StageWorktreeAll'](arg1);
 }
 
+export function StageWorktreePath(arg1, arg2) {
+  return window['go']['main']['App']['StageWorktreePath'](arg1, arg2);
+}
+
+export function UnstageWorktreePath(arg1, arg2) {
+  return window['go']['main']['App']['UnstageWorktreePath'](arg1, arg2);
+}
+
 export function UpdateSessionCWD(arg1, arg2) {
   return window['go']['main']['App']['UpdateSessionCWD'](arg1, arg2);
 }

@@ -1291,17 +1291,54 @@ body.is-resizing-pane * {
     max-width: 100%;
 }
 
+.diff-file-entry__row {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+    min-width: 0;
+}
+
 .diff-file-row {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
-    width: 100%;
     border: 1px solid transparent;
     border-radius: 10px;
     padding: 8px 10px;
     background: rgba(255, 255, 255, 0.03);
     text-align: left;
+}
+
+.diff-file-row__action {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--muted);
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.diff-file-row__action:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--fg);
+    border-color: var(--border-strong);
+}
+
+.diff-file-row__action:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.diff-file-row__spinner {
+    animation: session-spin 1s linear infinite;
 }
 
 .diff-file-row:hover {
@@ -1778,17 +1815,51 @@ select.field__control {
     min-width: 0;
 }
 
+.files-tree__row-wrap {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    min-width: 0;
+}
+
 .files-tree__row {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: 8px;
-    width: 100%;
     border: 1px solid transparent;
     border-radius: 10px;
     padding: 7px 10px;
     background: transparent;
     color: var(--muted-strong);
     text-align: left;
+}
+
+.files-tree__copy {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.files-tree__row-wrap:hover .files-tree__copy,
+.files-tree__row-wrap:focus-within .files-tree__copy {
+    opacity: 1;
+}
+
+.files-tree__copy:hover {
+    background: var(--panel-hover);
+    color: var(--fg);
 }
 
 .files-tree__row:hover {

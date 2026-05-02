@@ -37,6 +37,8 @@ type AppBinding = {
   GetFileDiff(worktreeId: number, path: string, staged: boolean): Promise<FileDiff>;
   CreateWorktreeBranch(worktreeId: number, branchName: string): Promise<AppSnapshot>;
   StageWorktreeAll(worktreeId: number): Promise<GitActionResult>;
+  StageWorktreePath(worktreeId: number, path: string): Promise<GitActionResult>;
+  UnstageWorktreePath(worktreeId: number, path: string): Promise<GitActionResult>;
   CommitWorktree(worktreeId: number, message: string): Promise<GitActionResult>;
   PushWorktree(worktreeId: number): Promise<GitActionResult>;
   GetWorktreeCommitHistory(worktreeId: number, limit: number): Promise<GitCommitSummary[]>;
@@ -138,6 +140,14 @@ export function createWorktreeBranch(worktreeId: number, branchName: string) {
 
 export function stageWorktreeAll(worktreeId: number) {
   return backend().StageWorktreeAll(worktreeId);
+}
+
+export function stageWorktreePath(worktreeId: number, path: string) {
+  return backend().StageWorktreePath(worktreeId, path);
+}
+
+export function unstageWorktreePath(worktreeId: number, path: string) {
+  return backend().UnstageWorktreePath(worktreeId, path);
 }
 
 export function commitWorktree(worktreeId: number, message: string) {

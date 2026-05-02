@@ -343,6 +343,20 @@ func (a *App) StageWorktreeAll(worktreeID int) (session.GitActionResult, error) 
 	return a.manager.StageWorktreeAll(worktreeID)
 }
 
+func (a *App) StageWorktreePath(worktreeID int, path string) (session.GitActionResult, error) {
+	if err := a.waitReady(); err != nil {
+		return session.GitActionResult{}, err
+	}
+	return a.manager.StageWorktreePath(worktreeID, path)
+}
+
+func (a *App) UnstageWorktreePath(worktreeID int, path string) (session.GitActionResult, error) {
+	if err := a.waitReady(); err != nil {
+		return session.GitActionResult{}, err
+	}
+	return a.manager.UnstageWorktreePath(worktreeID, path)
+}
+
 func (a *App) CommitWorktree(worktreeID int, message string) (session.GitActionResult, error) {
 	if err := a.waitReady(); err != nil {
 		return session.GitActionResult{}, err
