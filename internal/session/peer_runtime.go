@@ -503,7 +503,7 @@ func (r *peerRuntime) deliverQueued(now time.Time) error {
 			NextCommand: fmt.Sprintf("helm peers inbox --message-id %d", delivery.latest.ID),
 			Preview:     delivery.latest.Body,
 		})
-		if err := r.writeFunc(local.SessionID, envelope); err != nil {
+		if err := r.writeFunc(local.SessionID, envelope+"\r"); err != nil {
 			return err
 		}
 

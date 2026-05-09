@@ -82,6 +82,9 @@ func TestPeerRuntimeDeliverQueuedWritesInterruptAndDedupes(t *testing.T) {
 	if !strings.Contains(writes[0], "unread_count=2") {
 		t.Fatalf("interrupt = %q, want coalesced unread_count=2", writes[0])
 	}
+	if !strings.HasSuffix(writes[0], "\r") {
+		t.Fatalf("interrupt = %q, want trailing carriage return", writes[0])
+	}
 
 	inbox, err := store.ListPeerInbox("receiver", 0, 10, false)
 	if err != nil {
