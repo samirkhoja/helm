@@ -117,17 +117,21 @@ export function usePaneLayout(options: UsePaneLayoutOptions) {
     setDiffPanelOpen(false);
   };
 
+  const openUtilityPanel = (tab: UtilityPanelTab) => {
+    setUtilityPanelTab(tab);
+    if (tab !== "diff") {
+      setDiffPanelFullscreen(false);
+    }
+    setDiffPanelOpen(true);
+  };
+
   const toggleUtilityPanel = (tab: UtilityPanelTab) => {
     if (diffPanelOpen && utilityPanelTab === tab) {
       closeUtilityPanel();
       return;
     }
 
-    setUtilityPanelTab(tab);
-    if (tab !== "diff") {
-      setDiffPanelFullscreen(false);
-    }
-    setDiffPanelOpen(true);
+    openUtilityPanel(tab);
   };
 
   const toggleDiffFullscreen = () => {
@@ -317,6 +321,7 @@ export function usePaneLayout(options: UsePaneLayoutOptions) {
     diffPanelOpen,
     dismissUtilityOverlay,
     hydrateUIState,
+    openUtilityPanel,
     resetTerminalZoom,
     setDiffPanelFullscreen,
     sidebarOpen,

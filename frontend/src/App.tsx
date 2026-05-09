@@ -73,6 +73,7 @@ import {
   worktreeUtilityShellSession,
   type MenuAction,
   type SessionLauncherState,
+  type UtilityPanelTab,
   type WorkspacePickerState,
 } from "./utils/appShell";
 
@@ -229,6 +230,9 @@ function App() {
   const pendingShellOutputRef = useRef(new Map<number, string[]>());
   const [shellRailLoading, setShellRailLoading] = useState(false);
   const [shellRailError, setShellRailError] = useState<string | null>(null);
+  const [shellPanelSessionIds, setShellPanelSessionIds] = useState<Set<number>>(
+    () => new Set(),
+  );
 
   const setNotice = (notice: string | null) => {
     dispatch({ type: "setNotice", notice });
@@ -283,8 +287,12 @@ function App() {
     null;
   const activeSessionId = resolvedActiveSession?.id ?? 0;
   const activeUtilityShellSession = worktreeUtilityShellSession(activeWorktree);
+  const activeSessionShellPanelOpen =
+    activeSessionId > 0 && shellPanelSessionIds.has(activeSessionId);
   const shellPanelActive =
-    paneLayout.diffPanelOpen && paneLayout.utilityPanelTab === "shell";
+    activeSessionShellPanelOpen &&
+    paneLayout.diffPanelOpen &&
+    paneLayout.utilityPanelTab === "shell";
   const visibleSessionIds = useMemo(
     () => new Set(visibleSessions.map((session) => session.id)),
     [visibleSessions],
@@ -415,6 +423,80 @@ function App() {
     !state.workspacePicker &&
     !state.sessionLauncher;
 
+  const setShellPanelOpenForSession = useCallback(
+    (sessionId: number, open: boolean) => {
+      if (!sessionId) {
+        return;
+      }
+
+      setShellPanelSessionIds((current) => {
+        const next = new Set(current);
+        if (open) {
+          next.add(sessionId);
+        } else {
+          next.delete(sessionId);
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const closeActiveUtilityPanel = useCallback(async () => {
+    const closingShellPanel =
+      activeSessionId > 0 &&
+      paneLayout.diffPanelOpen &&
+      paneLayout.utilityPanelTab === "shell";
+    if (closingShellPanel) {
+      setShellPanelOpenForSession(activeSessionId, false);
+    }
+    return await fileEditorShell.closeUtilityPanel();
+  }, [
+    activeSessionId,
+    fileEditorShell,
+    paneLayout.diffPanelOpen,
+    paneLayout.utilityPanelTab,
+    setShellPanelOpenForSession,
+  ]);
+
+  const toggleShellPanelForActiveSession = useCallback(async () => {
+    if (!activeSessionId) {
+      return false;
+    }
+
+    if (activeSessionShellPanelOpen) {
+      setShellPanelOpenForSession(activeSessionId, false);
+      if (paneLayout.diffPanelOpen && paneLayout.utilityPanelTab === "shell") {
+        return await fileEditorShell.closeUtilityPanel();
+      }
+      return true;
+    }
+
+    if (!(await fileEditorShell.openUtilityPanel("shell"))) {
+      return false;
+    }
+    setShellPanelOpenForSession(activeSessionId, true);
+    return true;
+  }, [
+    activeSessionId,
+    activeSessionShellPanelOpen,
+    fileEditorShell,
+    paneLayout.diffPanelOpen,
+    paneLayout.utilityPanelTab,
+    setShellPanelOpenForSession,
+  ]);
+
+  const toggleNonShellUtilityPanel = useCallback(
+    async (tab: Exclude<UtilityPanelTab, "shell">) => {
+      const didToggle = await fileEditorShell.toggleUtilityPanel(tab);
+      if (didToggle && activeSessionId) {
+        setShellPanelOpenForSession(activeSessionId, false);
+      }
+      return didToggle;
+    },
+    [activeSessionId, fileEditorShell, setShellPanelOpenForSession],
+  );
+
   useWailsEvent<[SessionOutputEvent]>("session:output", (payload) => {
     if (visibleSessionIds.has(payload.sessionId)) {
       terminalRef.current?.writeOutput(payload.sessionId, payload.data);
@@ -499,6 +581,46 @@ function App() {
         handleError(error);
       });
   }, [activeSession, resolvedActiveSession, snapshot, uiHydrated]);
+
+  useEffect(() => {
+    setShellPanelSessionIds((current) => {
+      let changed = false;
+      const next = new Set<number>();
+      for (const sessionId of current) {
+        if (visibleSessionIds.has(sessionId)) {
+          next.add(sessionId);
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [visibleSessionIds]);
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      if (paneLayout.diffPanelOpen && paneLayout.utilityPanelTab === "shell") {
+        paneLayout.closeUtilityPanel();
+      }
+      return;
+    }
+
+    if (activeSessionShellPanelOpen) {
+      if (!paneLayout.diffPanelOpen || paneLayout.utilityPanelTab !== "shell") {
+        paneLayout.openUtilityPanel("shell");
+      }
+      return;
+    }
+
+    if (paneLayout.diffPanelOpen && paneLayout.utilityPanelTab === "shell") {
+      paneLayout.closeUtilityPanel();
+    }
+  }, [
+    activeSessionId,
+    activeSessionShellPanelOpen,
+    paneLayout.diffPanelOpen,
+    paneLayout.utilityPanelTab,
+  ]);
 
   useEffect(() => {
     if (shellPanelActive && activeUtilityShellSession) {
@@ -781,8 +903,11 @@ function App() {
     if (activeFile) {
       return await fileEditorShell.focusTerminal();
     }
-    if (paneLayout.diffPanelFullscreen || paneLayout.diffPanelOpen) {
+    if (paneLayout.diffPanelFullscreen) {
       return await fileEditorShell.dismissUtilityOverlay();
+    }
+    if (paneLayout.diffPanelOpen) {
+      return await closeActiveUtilityPanel();
     }
 
     return false;
@@ -802,7 +927,7 @@ function App() {
 
     if (
       (!paneLayout.diffPanelOpen || paneLayout.utilityPanelTab !== "files") &&
-      !(await fileEditorShell.toggleUtilityPanel("files"))
+      !(await toggleNonShellUtilityPanel("files"))
     ) {
       return false;
     }
@@ -813,9 +938,9 @@ function App() {
     return true;
   }, [
     activeWorktree,
-    fileEditorShell,
     paneLayout.diffPanelOpen,
     paneLayout.utilityPanelTab,
+    toggleNonShellUtilityPanel,
   ]);
 
   const ensureDiffPanelVisible = useCallback(async () => {
@@ -826,11 +951,11 @@ function App() {
       return true;
     }
 
-    return await fileEditorShell.toggleUtilityPanel("diff");
+    return await toggleNonShellUtilityPanel("diff");
   }, [
-    fileEditorShell,
     paneLayout.diffPanelOpen,
     paneLayout.utilityPanelTab,
+    toggleNonShellUtilityPanel,
   ]);
 
   const performAppAction = async (action: MenuAction) => {
@@ -862,16 +987,16 @@ function App() {
         paneLayout.toggleSidebar();
         return;
       case "toggle-diff":
-        await fileEditorShell.toggleUtilityPanel("diff");
+        await toggleNonShellUtilityPanel("diff");
         return;
       case "toggle-files":
-        await fileEditorShell.toggleUtilityPanel("files");
+        await toggleNonShellUtilityPanel("files");
         return;
       case "toggle-shell":
-        await fileEditorShell.toggleUtilityPanel("shell");
+        await toggleShellPanelForActiveSession();
         return;
       case "toggle-peers":
-        await fileEditorShell.toggleUtilityPanel("peers");
+        await toggleNonShellUtilityPanel("peers");
         return;
       case "toggle-diff-fullscreen":
         await fileEditorShell.toggleDiffFullscreen();
@@ -1064,7 +1189,7 @@ function App() {
             return diffPanel.commitChanges(message);
           }}
           onClose={() => {
-            void fileEditorShell.closeUtilityPanel();
+            void closeActiveUtilityPanel();
           }}
           onCreateDiffBranch={(branchName) => {
             return diffPanel.createBranch(branchName);
@@ -1132,16 +1257,16 @@ function App() {
             subtitle={fileEditorShell.headerSubtitle}
             title={fileEditorShell.headerTitle}
             onToggleDiff={() => {
-              void fileEditorShell.toggleUtilityPanel("diff");
+              void toggleNonShellUtilityPanel("diff");
             }}
             onToggleFiles={() => {
-              void fileEditorShell.toggleUtilityPanel("files");
+              void toggleNonShellUtilityPanel("files");
             }}
             onToggleShell={() => {
-              void fileEditorShell.toggleUtilityPanel("shell");
+              void toggleShellPanelForActiveSession();
             }}
             onTogglePeers={() => {
-              void fileEditorShell.toggleUtilityPanel("peers");
+              void toggleNonShellUtilityPanel("peers");
             }}
             onToggleSidebar={paneLayout.toggleSidebar}
           />

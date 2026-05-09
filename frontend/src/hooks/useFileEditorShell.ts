@@ -17,6 +17,7 @@ type PaneLayoutController = {
   closeUtilityPanel: () => void;
   diffPanelFullscreen: boolean;
   diffPanelOpen: boolean;
+  openUtilityPanel: (tab: UtilityPanelTab) => void;
   setDiffPanelFullscreen: (next: boolean | ((current: boolean) => boolean)) => void;
   toggleDiffFullscreen: () => void;
   toggleUtilityPanel: (tab: UtilityPanelTab) => void;
@@ -153,6 +154,29 @@ export function useFileEditorShell(options: UseFileEditorShellOptions) {
     ],
   );
 
+  const openUtilityPanel = useCallback(
+    async (tab: UtilityPanelTab) => {
+      if (
+        isLeavingFilesContext(
+          paneLayout.diffPanelOpen,
+          paneLayout.utilityPanelTab,
+          tab,
+        ) &&
+        !(await confirmNavigation())
+      ) {
+        return false;
+      }
+      paneLayout.openUtilityPanel(tab);
+      return true;
+    },
+    [
+      confirmNavigation,
+      paneLayout.diffPanelOpen,
+      paneLayout.openUtilityPanel,
+      paneLayout.utilityPanelTab,
+    ],
+  );
+
   const dismissUtilityOverlay = useCallback(async () => {
     if (paneLayout.diffPanelFullscreen) {
       paneLayout.setDiffPanelFullscreen(false);
@@ -234,6 +258,7 @@ export function useFileEditorShell(options: UseFileEditorShellOptions) {
     focusTerminal,
     headerSubtitle,
     headerTitle,
+    openUtilityPanel,
     saveFileEditor,
     toggleDiffFullscreen,
     toggleUtilityPanel,
