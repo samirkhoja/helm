@@ -428,6 +428,8 @@ select {
 }
 
 .main-panel {
+    grid-column: 3;
+    grid-row: 1;
     display: flex;
     height: 100%;
     min-width: 0;
@@ -770,6 +772,11 @@ select {
     cursor: col-resize;
 }
 
+.diff-resizer {
+    grid-column: 4;
+    grid-row: 1;
+}
+
 .sidebar-resizer::before,
 .diff-resizer::before {
     content: "";
@@ -805,6 +812,8 @@ body.is-resizing-pane * {
 
 .diff-panel {
     --diff-text-zoom: 1;
+    grid-column: 5;
+    grid-row: 1;
     display: flex;
     height: 100%;
     min-width: 0;
